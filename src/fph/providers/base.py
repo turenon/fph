@@ -39,6 +39,14 @@ class AuctionProvider(ABC):
     def check_ready(self) -> tuple[bool, str]:
         """Verify runtime prerequisites without scraping."""
 
+    def expand_status_queries(self, status_scope: str) -> list[tuple[str, str]]:
+        """Expand logical status scope ('active', 'ended', etc.) into (label, query_param) pairs."""
+        return [(status_scope or "all", "")]
+
+    def preview_list_url(self, region: RegionConfig, st_param: str, page: int = 1) -> str:
+        """Return target list URL for diagnostics and preview (without network requests)."""
+        return region.custom_url or ""
+
     @abstractmethod
     def fetch_list_page(
         self,

@@ -2,50 +2,21 @@ from __future__ import annotations
 
 import json
 import re
-import shutil
-import subprocess
-from typing import Any, Callable
+from typing import Any
 
 from fph.config import ProviderConfig, RegionConfig
 from fph.models import RawAuctionDetail, RawAuctionItem
 from fph.normalizer import normalize_datetime, normalize_stage, normalize_status, parse_price_yuan
-from fph.providers.base import AuctionProvider, AuthRequiredError, PageResult, ProviderError
-from fph.providers.taobao_urls import build_list_url
-
-MARKER_START = "__FPH_JSON_START__"
-MARKER_END = "__FPH_JSON_END__"
-
-CommandRunner = Callable[[list[str], str, int], tuple[int, str, str]]
-
-
-def _default_command_runner(cmd: list[str], stdin_text: str, timeout: int) -> tuple[int, str, str]:
-    proc = subprocess.run(
-        cmd,
-        input=stdin_text,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        capture_output=True,
-        timeout=timeout,
-        check=False,
-    )
-    return proc.returncode, proc.stdout, proc.stderr
-
-
-def _extract_marked_json(stdout: str) -> dict[str, Any]:
-    start_idx = stdout.find(MARKER_START)
-    end_idx = stdout.find(MARKER_END, start_idx + len(MARKER_START)) if start_idx != -1 else -1
-    if start_idx == -1 or end_idx == -1:
-        preview = stdout.strip()[-400:] if stdout else "(empty stdout)"
-        raise ProviderError(f"未能从 ego-browser 输出中解析结果标记。stdout 尾部: {preview}")
-    payload_str = stdout[start_idx + len(MARKER_START) : end_idx].strip()
-    try:
-        data = json.loads(payload_str)
-    except json.JSONDecodeError as exc:
-        raise ProviderError(f"ego-browser 返回了无效 JSON: {exc}") from exc
-    if not isinstance(data, dict):
-        raise ProviderError("ego-browser 返回的 JSON 根对象不是 dict。")
-    return data
+from fph.providers.base import AuctionProvider, PageResult
+from fph.providers.ego_runtime import (
+    MARKER_END,
+    MARKER_START,
+    TASK_SPACE_HELPER_JS,
+    CommandRunner,
+    EgoBrowserRunner,
+    _to_int,
+)
+from fph.providers.taobao_urls import build_list_url, expand_status_queries as _expand_taobao_status_queries
 
 
 def _normalize_item_url(url: str) -> str:
@@ -73,7 +44,7 @@ def _build_list_script(task_space: str, url: str, page_timeout: int) -> str:
         {
             "taskSpace": task_space,
             "url": url,
-            "timeout": page_timeout,
+            "timeoutMs": max(5, page_timeout) * 1000,
             "markerStart": MARKER_START,
             "markerEnd": MARKER_END,
         },
@@ -81,13 +52,14 @@ def _build_list_script(task_space: str, url: str, page_timeout: int) -> str:
     )
     return f"""
 const CFG = {cfg_json};
+{TASK_SPACE_HELPER_JS}
 
 async function run() {{
-  await useOrCreateTaskSpace(CFG.taskSpace);
-  await openOrReuseTab(CFG.url, {{ wait: true, timeout: CFG.timeout }});
-  await wait(2);
+  const {{ task, page }} = await getOrCreatePage(CFG.taskSpace);
+  await page.goto(CFG.url, {{ timeout: CFG.timeoutMs }});
+  await page.waitForTimeout(2000);
 
-  const result = await js(String.raw`(() => {{
+  const result = await page.evaluate(() => {{
     const href = location.href || '';
     const title = document.title || '';
     const bodyText = (document.body && document.body.innerText) ? document.body.innerText : '';
@@ -204,13 +176,19 @@ async function run() {{
       hasNext,
       items,
     }};
-  }})()`);
+  }});
 
-  cliLog(CFG.markerStart + JSON.stringify(result) + CFG.markerEnd);
+  if (result && result.authRequired) {{
+    try {{
+      await task.handOff();
+    }} catch (_) {{}}
+  }}
+
+  console.log(CFG.markerStart + JSON.stringify(result) + CFG.markerEnd);
 }}
 
 run().catch((err) => {{
-  cliLog(CFG.markerStart + JSON.stringify({{ error: String(err && err.stack ? err.stack : err) }}) + CFG.markerEnd);
+  console.log(CFG.markerStart + JSON.stringify({{ error: String(err && err.stack ? err.stack : err) }}) + CFG.markerEnd);
   process.exit(1);
 }});
 """.strip()
@@ -222,7 +200,7 @@ def _build_detail_script(task_space: str, url: str, page_timeout: int) -> str:
         {
             "taskSpace": task_space,
             "url": url,
-            "timeout": page_timeout,
+            "timeoutMs": max(5, page_timeout) * 1000,
             "markerStart": MARKER_START,
             "markerEnd": MARKER_END,
         },
@@ -230,15 +208,16 @@ def _build_detail_script(task_space: str, url: str, page_timeout: int) -> str:
     )
     return f"""
 const CFG = {cfg_json};
+{TASK_SPACE_HELPER_JS}
 
 async function run() {{
-  await useOrCreateTaskSpace(CFG.taskSpace);
-  await openOrReuseTab(CFG.url, {{ wait: true, timeout: CFG.timeout }});
-  await wait(2);
-  await scrollBy(800);
-  await wait(1);
+  const {{ task, page }} = await getOrCreatePage(CFG.taskSpace);
+  await page.goto(CFG.url, {{ timeout: CFG.timeoutMs }});
+  await page.waitForTimeout(2000);
+  await page.evaluate(() => window.scrollBy(0, 800));
+  await page.waitForTimeout(1000);
 
-  const result = await js(String.raw`(() => {{
+  const result = await page.evaluate(() => {{
     const href = location.href || '';
     const title = document.title || '';
     const bodyText = (document.body && document.body.innerText) ? document.body.innerText : '';
@@ -270,9 +249,9 @@ async function run() {{
     const surveyText = surveyEl ? (surveyEl.innerText || '').trim() : '';
 
     const courtEl = document.querySelector('.unit-txt, .court-name, [class*="court"], [class*="org-name"]');
-    const courtName = courtEl ? (courtEl.innerText || '').trim() : (pick(/处置单位[：:\\s]*([^\\n]{2,30})/) || '');
+    const courtName = courtEl ? (courtEl.innerText || '').trim() : (pick(/处置单位[：:\\s]*([^\\n]{{2,30}})/) || '');
 
-    const address = pick(/(?:标的物所在地|房产坐落|坐落|地址)[：:\\s]*([^\\n]{4,80})/) || '';
+    const address = pick(/(?:标的物所在地|房产坐落|坐落|地址)[：:\\s]*([^\\n]{{4,80}})/) || '';
 
     return {{
       authRequired: false,
@@ -291,25 +270,22 @@ async function run() {{
       noticeText: noticeText.slice(0, 12000),
       surveyText: surveyText.slice(0, 8000),
     }};
-  }})()`);
+  }});
 
-  cliLog(CFG.markerStart + JSON.stringify(result) + CFG.markerEnd);
+  if (result && result.authRequired) {{
+    try {{
+      await task.handOff();
+    }} catch (_) {{}}
+  }}
+
+  console.log(CFG.markerStart + JSON.stringify(result) + CFG.markerEnd);
 }}
 
 run().catch((err) => {{
-  cliLog(CFG.markerStart + JSON.stringify({{ error: String(err && err.stack ? err.stack : err) }}) + CFG.markerEnd);
+  console.log(CFG.markerStart + JSON.stringify({{ error: String(err && err.stack ? err.stack : err) }}) + CFG.markerEnd);
   process.exit(1);
 }});
 """.strip()
-
-
-def _to_int(val: Any) -> int | None:
-    if val is None or val == "":
-        return None
-    try:
-        return int(str(val).replace(",", "").strip())
-    except ValueError:
-        return None
 
 
 class TaobaoEgoProvider(AuctionProvider):
@@ -323,45 +299,19 @@ class TaobaoEgoProvider(AuctionProvider):
         runner: CommandRunner | None = None,
     ) -> None:
         self.config = config
-        self._runner = runner or _default_command_runner
+        self._ego = EgoBrowserRunner(config, runner=runner)
 
     def check_ready(self) -> tuple[bool, str]:
-        resolved = shutil.which(self.config.ego_browser_cmd)
-        if not resolved:
-            return (
-                False,
-                f"未找到 `{self.config.ego_browser_cmd}` 命令。请先安装 ego(lite) 桌面端并确保 ego-browser 已加入 PATH。",
-            )
-        return True, f"已检测到 ego-browser: {resolved}（Task Space: {self.config.task_space}）"
+        return self._ego.check_ready()
+
+    def expand_status_queries(self, status_scope: str) -> list[tuple[str, str]]:
+        return _expand_taobao_status_queries(status_scope)
+
+    def preview_list_url(self, region: RegionConfig, st_param: str, page: int = 1) -> str:
+        return build_list_url(region, st_param=st_param, page=page)
 
     def _run_ego_script(self, script: str) -> dict[str, Any]:
-        cmd = [self.config.ego_browser_cmd, "nodejs"]
-        try:
-            code, stdout, stderr = self._runner(cmd, script, self.config.timeout_seconds)
-        except FileNotFoundError as exc:
-            raise ProviderError(
-                f"未找到命令 `{self.config.ego_browser_cmd}`。请先安装 ego(lite) 或在 config.toml 中配置完整路径。"
-            ) from exc
-        except subprocess.TimeoutExpired as exc:
-            raise ProviderError(f"ego-browser 执行超时（>{self.config.timeout_seconds}s）。") from exc
-
-        if MARKER_START in stdout:
-            payload = _extract_marked_json(stdout)
-            if payload.get("error"):
-                raise ProviderError(f"ego-browser 脚本报错: {payload['error']}")
-            if payload.get("authRequired"):
-                raise AuthRequiredError(
-                    str(payload.get("reason") or "需要登录或人机验证"),
-                    url=str(payload.get("currentUrl") or ""),
-                    task_space=self.config.task_space,
-                )
-            return payload
-
-        if code != 0:
-            err_msg = (stderr or stdout).strip()[-500:]
-            raise ProviderError(f"ego-browser 退出码 {code}: {err_msg}")
-
-        return _extract_marked_json(stdout)
+        return self._ego.run_script(script)
 
     def fetch_list_page(
         self,

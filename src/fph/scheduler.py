@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 
 from fph.config import AppConfig
 from fph.db import AuctionDB
-from fph.pipeline import SyncPipeline, build_provider
+from fph.pipeline import SyncPipeline, build_providers
 
 logger = logging.getLogger(__name__)
 CN_TZ = timezone(timedelta(hours=8))
@@ -29,8 +29,8 @@ def run_scheduler(config: AppConfig, *, run_immediately: bool = True) -> None:
         while True:
             if not first or run_immediately:
                 with AuctionDB(config.storage.db_path) as db:
-                    provider = build_provider(config)
-                    pipeline = SyncPipeline(config, db, provider)
+                    providers = build_providers(config)
+                    pipeline = SyncPipeline(config, db, providers=providers)
                     summaries = pipeline.run_full_cycle(
                         enrich_details=config.schedule.auto_enrich_details,
                         refresh_ended=config.schedule.auto_refresh_ended,

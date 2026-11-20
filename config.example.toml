@@ -60,3 +60,24 @@ city = "龙岩"
 location_code = "350800"
 category = "50025969"
 status_scopes = ["active", "ended"]
+
+# 京东司法拍卖监控区域（住宅用房 jd_category_id=12728）
+[[regions]]
+name = "福州市-住宅-京东"
+provider = "jd_ego"
+province = "福建"
+city = "福州"
+jd_province_id = "16"
+jd_city_id = "1303"
+jd_category_id = "12728"
+status_scopes = ["active", "ended"]
+
+[[regions]]
+name = "龙岩市-住宅-京东"
+provider = "jd_ego"
+province = "福建"
+city = "龙岩"
+jd_province_id = "16"
+jd_city_id = "1362"
+jd_category_id = "12728"
+status_scopes = ["active", "ended"]

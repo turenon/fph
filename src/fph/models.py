@@ -29,6 +29,9 @@ class RawAuctionItem:
     court_name: str = ""
     category_hint: str = ""
     raw_payload: dict[str, Any] = field(default_factory=dict)
+    address: str = ""
+    community_name: str = ""
+    area_sqm: float | None = None
 
 
 @dataclass(slots=True)

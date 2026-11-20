@@ -1,0 +1,1377 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>FPH 法拍房数据看板</title>
+  <style>
+    :root {
+      --bg: #f4f6f9;
+      --surface: #ffffff;
+      --surface-muted: #f8fafc;
+      --border: #e2e8f0;
+      --border-strong: #cbd5e1;
+      --text: #0f172a;
+      --text-muted: #475569;
+      --text-subtle: #64748b;
+      --primary: #2563eb;
+      --primary-hover: #1d4ed8;
+      --primary-soft: #eff6ff;
+      --green: #15803d;
+      --green-bg: #dcfce7;
+      --red: #b91c1c;
+      --red-bg: #fee2e2;
+      --amber: #b45309;
+      --amber-bg: #fef3c7;
+      --slate: #475569;
+      --slate-bg: #f1f5f9;
+      --blue: #1d4ed8;
+      --blue-bg: #dbeafe;
+      --purple: #6d28d9;
+      --purple-bg: #ede9fe;
+      --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.05);
+      --shadow-md: 0 10px 30px rgba(15, 23, 42, 0.14);
+      --radius: 10px;
+    }
+
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; background: var(--bg); color: var(--text); }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", "Segoe UI", Roboto, sans-serif;
+      font-size: 14px;
+      line-height: 1.5;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    .num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; }
+
+    .app-shell {
+      max-width: 1440px;
+      margin: 0 auto;
+      padding: 20px 24px 40px;
+    }
+
+    /* Top Header */
+    .topbar {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 18px;
+    }
+    .brand h1 {
+      margin: 0;
+      font-size: 20px;
+      font-weight: 700;
+      letter-spacing: -0.01em;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .brand-tag {
+      font-size: 12px;
+      font-weight: 600;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: var(--primary-soft);
+      color: var(--primary);
+      border: 1px solid #bfdbfe;
+    }
+    .db-meta {
+      margin-top: 4px;
+      font-size: 12px;
+      color: var(--text-subtle);
+      word-break: break-all;
+    }
+    .topbar-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+    }
+
+    /* Buttons & Inputs */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      height: 34px;
+      padding: 0 12px;
+      border-radius: 8px;
+      border: 1px solid var(--border-strong);
+      background: var(--surface);
+      color: var(--text);
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      text-decoration: none;
+      transition: background 0.15s, border-color 0.15s;
+    }
+    .btn:hover { background: var(--surface-muted); border-color: #94a3b8; }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .btn-primary {
+      background: var(--primary);
+      border-color: var(--primary);
+      color: #fff;
+    }
+    .btn-primary:hover { background: var(--primary-hover); border-color: var(--primary-hover); }
+    .btn-sm { height: 28px; padding: 0 9px; font-size: 12px; border-radius: 6px; }
+
+    input[type="text"], input[type="number"], select {
+      height: 34px;
+      padding: 0 10px;
+      border: 1px solid var(--border-strong);
+      border-radius: 8px;
+      background: var(--surface);
+      color: var(--text);
+      font-size: 13px;
+      outline: none;
+    }
+    input:focus, select:focus {
+      border-color: var(--primary);
+      box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+    }
+
+    /* KPI Row */
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 12px;
+      margin-bottom: 18px;
+    }
+    .kpi-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 12px 14px;
+      box-shadow: var(--shadow-sm);
+    }
+    .kpi-label { font-size: 12px; color: var(--text-subtle); margin-bottom: 4px; }
+    .kpi-value { font-size: 22px; font-weight: 700; color: var(--text); line-height: 1.2; }
+    .kpi-sub { font-size: 11px; color: var(--text-subtle); margin-top: 4px; }
+
+    /* Tabs */
+    .tabs-bar {
+      display: flex;
+      gap: 6px;
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 16px;
+      overflow-x: auto;
+    }
+    .tab-btn {
+      padding: 10px 16px;
+      background: transparent;
+      border: none;
+      border-bottom: 2px solid transparent;
+      color: var(--text-muted);
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: color 0.15s, border-color 0.15s;
+    }
+    .tab-btn:hover { color: var(--text); }
+    .tab-btn.active {
+      color: var(--primary);
+      border-bottom-color: var(--primary);
+    }
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
+
+    /* Card & Filter Bar */
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow-sm);
+      overflow: hidden;
+    }
+    .filter-bar {
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface-muted);
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+    }
+    .filter-group {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .filter-group label {
+      font-size: 12px;
+      color: var(--text-muted);
+      white-space: nowrap;
+    }
+    .check-label {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 13px;
+      color: var(--text);
+      cursor: pointer;
+      user-select: none;
+    }
+    .check-label input { width: 15px; height: 15px; margin: 0; cursor: pointer; }
+
+    /* Table */
+    .table-wrap { overflow-x: auto; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      text-align: left;
+      font-size: 13px;
+    }
+    thead th {
+      background: var(--surface-muted);
+      color: var(--text-muted);
+      font-weight: 600;
+      font-size: 12px;
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--border);
+      white-space: nowrap;
+    }
+    tbody td {
+      padding: 11px 12px;
+      border-bottom: 1px solid var(--border);
+      vertical-align: top;
+    }
+    tbody tr.clickable-row { cursor: pointer; }
+    tbody tr.clickable-row:hover { background: #f8fafc; }
+    tbody tr:last-child td { border-bottom: none; }
+
+    .title-cell { min-width: 260px; max-width: 420px; }
+    .item-title {
+      font-weight: 600;
+      color: var(--text);
+      margin-bottom: 4px;
+      word-break: break-word;
+    }
+    .item-sub {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 5px;
+      align-items: center;
+      font-size: 12px;
+      color: var(--text-subtle);
+    }
+
+    /* Badges */
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 1px 7px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 600;
+      white-space: nowrap;
+      line-height: 1.6;
+    }
+    .badge-green { background: var(--green-bg); color: var(--green); }
+    .badge-red { background: var(--red-bg); color: var(--red); }
+    .badge-amber { background: var(--amber-bg); color: var(--amber); }
+    .badge-blue { background: var(--blue-bg); color: var(--blue); }
+    .badge-purple { background: var(--purple-bg); color: var(--purple); }
+    .badge-slate { background: var(--slate-bg); color: var(--slate); }
+
+    .price-main { font-weight: 700; color: var(--text); }
+    .price-sub { font-size: 11px; color: var(--text-subtle); margin-top: 2px; }
+
+    /* Progress bar for stats */
+    .meter-wrap { display: flex; align-items: center; gap: 8px; }
+    .meter-track {
+      width: 64px;
+      height: 7px;
+      border-radius: 999px;
+      background: #e2e8f0;
+      overflow: hidden;
+      flex-shrink: 0;
+    }
+    .meter-fill { height: 100%; border-radius: 999px; background: var(--primary); }
+    .meter-fill.green { background: #16a34a; }
+
+    /* Pagination & Empty state */
+    .table-footer {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      padding: 12px 16px;
+      border-top: 1px solid var(--border);
+      background: var(--surface-muted);
+      font-size: 13px;
+      color: var(--text-muted);
+    }
+    .pager-controls { display: flex; align-items: center; gap: 8px; }
+    .empty-state {
+      padding: 44px 20px;
+      text-align: center;
+      color: var(--text-subtle);
+    }
+    .empty-state strong { display: block; font-size: 15px; color: var(--text); margin-bottom: 6px; }
+    .error-banner {
+      padding: 12px 16px;
+      background: var(--red-bg);
+      color: var(--red);
+      border: 1px solid #fecaca;
+      border-radius: 8px;
+      margin-bottom: 14px;
+      display: none;
+    }
+
+    /* Modal / Drawer */
+    .modal-backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(15, 23, 42, 0.48);
+      display: none;
+      justify-content: flex-end;
+      z-index: 1000;
+    }
+    .modal-backdrop.open { display: flex; }
+    .drawer {
+      width: min(820px, 100vw);
+      height: 100%;
+      background: var(--surface);
+      box-shadow: var(--shadow-md);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    .drawer-header {
+      padding: 16px 20px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 12px;
+      background: var(--surface-muted);
+    }
+    .drawer-title { font-size: 17px; font-weight: 700; margin: 0 0 6px; }
+    .drawer-body {
+      padding: 18px 20px 32px;
+      overflow-y: auto;
+      flex: 1;
+    }
+    .section-title {
+      font-size: 14px;
+      font-weight: 700;
+      margin: 20px 0 10px;
+      padding-bottom: 6px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .detail-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+      gap: 10px;
+    }
+    .detail-kv {
+      background: var(--surface-muted);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 8px 10px;
+    }
+    .detail-k { font-size: 11px; color: var(--text-subtle); }
+    .detail-v { font-size: 13px; font-weight: 600; margin-top: 2px; word-break: break-word; }
+    .text-box {
+      background: var(--surface-muted);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px;
+      font-size: 13px;
+      line-height: 1.65;
+      white-space: pre-wrap;
+      word-break: break-word;
+      max-height: 280px;
+      overflow-y: auto;
+    }
+    .highlight-row { background: #eff6ff !important; }
+    .actions-cell { white-space: nowrap; display: flex; gap: 6px; }
+
+    @media (max-width: 720px) {
+      .app-shell { padding: 14px 12px 30px; }
+      .title-cell { min-width: 200px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <div class="brand">
+        <h1>
+          FPH 法拍房数据看板
+          <span class="brand-tag">本地 SQLite 实时视图</span>
+        </h1>
+        <div class="db-meta" id="dbMeta">正在加载数据库信息...</div>
+      </div>
+      <div class="topbar-actions">
+        <button class="btn" id="btnRefreshAll" type="button">刷新数据</button>
+        <a class="btn" id="btnExportCsv" href="/api/export?dataset=all&format=csv">导出全量 CSV</a>
+        <a class="btn" id="btnExportJson" href="/api/export?dataset=all&format=json">导出全量 JSON</a>
+      </div>
+    </header>
+
+    <div class="error-banner" id="errorBanner"></div>
+
+    <section class="kpi-grid" id="kpiGrid">
+      <div class="kpi-card"><div class="kpi-label">标的物总数</div><div class="kpi-value num" id="kpiProps">-</div><div class="kpi-sub">按地址归并去重</div></div>
+      <div class="kpi-card"><div class="kpi-label">拍卖轮次</div><div class="kpi-value num" id="kpiRounds">-</div><div class="kpi-sub">含全部拍次记录</div></div>
+      <div class="kpi-card"><div class="kpi-label">纯住宅全产权</div><div class="kpi-value num" id="kpiResidential">-</div><div class="kpi-sub">行情分析口径</div></div>
+      <div class="kpi-card"><div class="kpi-label">在拍 / 预告</div><div class="kpi-value num" id="kpiActive">-</div><div class="kpi-sub">可关注竞拍</div></div>
+      <div class="kpi-card"><div class="kpi-label">已成交</div><div class="kpi-value num" id="kpiSold">-</div><div class="kpi-sub">历史成交样本</div></div>
+      <div class="kpi-card"><div class="kpi-label">已流拍</div><div class="kpi-value num" id="kpiFailed">-</div><div class="kpi-sub">等待再拍/参考</div></div>
+      <div class="kpi-card"><div class="kpi-label">已补抓详情</div><div class="kpi-value num" id="kpiEnriched">-</div><div class="kpi-sub">含面积/公告/风险</div></div>
+    </section>
+
+    <nav class="tabs-bar" role="tablist">
+      <button class="tab-btn active" data-tab="items" type="button">房源列表</button>
+      <button class="tab-btn" data-tab="bargains" type="button">捡漏候选</button>
+      <button class="tab-btn" data-tab="stats" type="button">区域行情</button>
+      <button class="tab-btn" data-tab="logs" type="button">采集日志</button>
+    </nav>
+
+    <!-- Tab 1: All Items -->
+    <section class="tab-panel active" id="tab-items">
+      <div class="card">
+        <div class="filter-bar">
+          <div class="filter-group">
+            <input type="text" id="filterQ" placeholder="搜标题 / 小区 / 法院 / ID" style="width: 210px;" />
+          </div>
+          <div class="filter-group">
+            <label for="filterPlatform">平台</label>
+            <select id="filterPlatform">
+              <option value="all">全部平台</option>
+              <option value="taobao">淘宝法拍</option>
+              <option value="jd">京东法拍</option>
+            </select>
+          </div>
+          <div class="filter-group">
+            <label for="filterCity">城市</label>
+            <select id="filterCity"><option value="">全部城市</option></select>
+          </div>
+          <div class="filter-group">
+            <label for="filterDistrict">区县</label>
+            <select id="filterDistrict"><option value="">全部区县</option></select>
+          </div>
+          <div class="filter-group">
+            <label for="filterType">物业</label>
+            <select id="filterType">
+              <option value="all">全部类型</option>
+              <option value="residential">住宅</option>
+              <option value="commercial">商业</option>
+              <option value="industrial">工业/厂房</option>
+              <option value="parking">车位/储藏</option>
+              <option value="land">土地</option>
+              <option value="other">其他</option>
+            </select>
+          </div>
+          <div class="filter-group">
+            <label for="filterStatus">状态</label>
+            <select id="filterStatus">
+              <option value="all">全部状态</option>
+              <option value="active">在拍 + 预告</option>
+              <option value="ongoing">正在进行</option>
+              <option value="upcoming">即将开始</option>
+              <option value="sold">已成交</option>
+              <option value="failed">已流拍</option>
+              <option value="withdrawn">已撤回</option>
+              <option value="suspended">已中止</option>
+              <option value="ended">已结束</option>
+              <option value="unknown">未知</option>
+            </select>
+          </div>
+          <div class="filter-group">
+            <label for="filterStage">阶段</label>
+            <select id="filterStage">
+              <option value="all">全部阶段</option>
+              <option value="一拍">一拍</option>
+              <option value="二拍">二拍</option>
+              <option value="变卖">变卖</option>
+              <option value="重新拍卖">重新拍卖</option>
+              <option value="未知">未知</option>
+            </select>
+          </div>
+          <div class="filter-group">
+            <label for="filterRisk">风险</label>
+            <select id="filterRisk">
+              <option value="all">全部风险</option>
+              <option value="low">低风险</option>
+              <option value="medium">中风险</option>
+              <option value="high">高风险</option>
+            </select>
+          </div>
+          <div class="filter-group">
+            <label for="filterSort">排序</label>
+            <select id="filterSort">
+              <option value="end_time_desc">结拍时间 ↓</option>
+              <option value="end_time_asc">结拍时间 ↑</option>
+              <option value="price_asc">价格从低到高</option>
+              <option value="price_desc">价格从高到低</option>
+              <option value="discount_asc">折扣最低优先</option>
+              <option value="unit_price_asc">单价最低优先</option>
+              <option value="watch_desc">围观人数最多</option>
+              <option value="last_seen_desc">最近采集优先</option>
+            </select>
+          </div>
+          <label class="check-label"><input type="checkbox" id="filterFullShare" /> 仅全产权</label>
+          <label class="check-label"><input type="checkbox" id="filterEnriched" /> 仅已抓详情</label>
+          <button class="btn" id="btnResetItems" type="button">重置</button>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>标的物</th>
+                <th>阶段</th>
+                <th>状态</th>
+                <th>当前/起拍价</th>
+                <th>评估价</th>
+                <th>折扣</th>
+                <th>面积 / 单价</th>
+                <th>围观 / 报名 / 出价</th>
+                <th>结拍时间</th>
+                <th>风险</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody id="itemsBody">
+              <tr><td colspan="11" class="empty-state">加载中...</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="table-footer">
+          <div id="itemsSummary">共 0 条记录</div>
+          <div class="pager-controls">
+            <label for="pageSizeSelect" style="font-size:12px;">每页</label>
+            <select id="pageSizeSelect" style="height:28px;font-size:12px;">
+              <option value="20" selected>20</option>
+              <option value="50">50</option>
+              <option value="100">100</option>
+            </select>
+            <button class="btn btn-sm" id="btnPrevPage" type="button">上一页</button>
+            <span class="num" id="pageIndicator">1 / 1</span>
+            <button class="btn btn-sm" id="btnNextPage" type="button">下一页</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Tab 2: Bargains -->
+    <section class="tab-panel" id="tab-bargains">
+      <div class="card">
+        <div class="filter-bar">
+          <div class="filter-group">
+            <label for="bCity">城市</label>
+            <select id="bCity"><option value="">全部城市</option></select>
+          </div>
+          <div class="filter-group">
+            <label for="bDistrict">区县</label>
+            <input type="text" id="bDistrict" placeholder="如 鼓楼 / 仓山" style="width: 120px;" />
+          </div>
+          <div class="filter-group">
+            <label for="bMaxDiscount">最高折扣</label>
+            <input type="number" id="bMaxDiscount" value="0.80" step="0.05" min="0.1" max="2" style="width: 82px;" />
+          </div>
+          <div class="filter-group">
+            <label for="bMaxTotal">最高总价(万)</label>
+            <input type="number" id="bMaxTotal" placeholder="不限" min="1" style="width: 96px;" />
+          </div>
+          <div class="filter-group">
+            <label for="bMinArea">最小面积(㎡)</label>
+            <input type="number" id="bMinArea" placeholder="不限" min="1" style="width: 96px;" />
+          </div>
+          <div class="filter-group">
+            <label for="bMaxRisk">最高风险</label>
+            <select id="bMaxRisk">
+              <option value="low">仅低风险</option>
+              <option value="medium" selected>中低风险</option>
+              <option value="high">包含高风险</option>
+            </select>
+          </div>
+          <div class="filter-group">
+            <label for="bStage">阶段</label>
+            <select id="bStage">
+              <option value="">不限</option>
+              <option value="二拍">二拍</option>
+              <option value="变卖">变卖</option>
+              <option value="一拍">一拍</option>
+            </select>
+          </div>
+          <button class="btn btn-primary" id="btnSearchBargains" type="button">筛选候选</button>
+          <a class="btn" href="/api/export?dataset=bargains&format=csv">导出候选 CSV</a>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>城市 / 区县</th>
+                <th>标题 / 小区</th>
+                <th>阶段</th>
+                <th>起拍/当前(万)</th>
+                <th>评估(万)</th>
+                <th>折扣</th>
+                <th>面积(㎡)</th>
+                <th>单价(元/㎡)</th>
+                <th>报名 / 出价</th>
+                <th>风险</th>
+                <th>结拍时间</th>
+                <th>链接</th>
+              </tr>
+            </thead>
+            <tbody id="bargainsBody">
+              <tr><td colspan="12" class="empty-state">加载中...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- Tab 3: Stats -->
+    <section class="tab-panel" id="tab-stats">
+      <div class="card">
+        <div class="filter-bar">
+          <div class="filter-group">
+            <label for="sCity">城市</label>
+            <select id="sCity"><option value="">全部城市</option></select>
+          </div>
+          <label class="check-label"><input type="checkbox" id="sByDistrict" /> 按区县细分</label>
+          <label class="check-label"><input type="checkbox" id="sByMonth" /> 按月份细分</label>
+          <button class="btn btn-primary" id="btnLoadStats" type="button">更新统计</button>
+          <a class="btn" href="/api/export?dataset=deals&format=csv">导出住宅结拍 CSV</a>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead id="statsHead"></thead>
+            <tbody id="statsBody">
+              <tr><td colspan="11" class="empty-state">加载中...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- Tab 4: Sync Runs -->
+    <section class="tab-panel" id="tab-logs">
+      <div class="card">
+        <div class="filter-bar" style="justify-content: space-between;">
+          <span style="font-size:13px;color:var(--text-muted);">展示最近 30 次采集任务记录（`sync_runs`）</span>
+          <button class="btn" id="btnReloadLogs" type="button">刷新日志</button>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>平台</th>
+                <th>监控区域</th>
+                <th>状态</th>
+                <th>页数</th>
+                <th>扫描条目</th>
+                <th>新增标的</th>
+                <th>更新轮次</th>
+                <th>补抓详情</th>
+                <th>回刷结拍</th>
+                <th>开始时间</th>
+                <th>结束时间</th>
+                <th>提示信息</th>
+              </tr>
+            </thead>
+            <tbody id="logsBody">
+              <tr><td colspan="13" class="empty-state">加载中...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <!-- Detail Drawer -->
+  <div class="modal-backdrop" id="detailBackdrop" aria-hidden="true">
+    <div class="drawer" role="dialog" aria-modal="true" aria-labelledby="drawerTitle">
+      <div class="drawer-header">
+        <div>
+          <h2 class="drawer-title" id="drawerTitle">标的详情</h2>
+          <div id="drawerBadges" class="item-sub"></div>
+        </div>
+        <div style="display:flex;gap:8px;flex-shrink:0;">
+          <a class="btn btn-sm btn-primary" id="drawerExternalLink" href="#" target="_blank" rel="noopener noreferrer" style="display:none;">打开原页</a>
+          <button class="btn btn-sm" id="btnCloseDrawer" type="button">关闭</button>
+        </div>
+      </div>
+      <div class="drawer-body" id="drawerBody">加载中...</div>
+    </div>
+  </div>
+
+  <script>
+    (() => {
+      const TYPE_LABELS = {
+        residential: "住宅",
+        commercial: "商业",
+        industrial: "工业/厂房",
+        parking: "车位/储藏",
+        land: "土地",
+        other: "其他",
+      };
+
+      const STATUS_META = {
+        ongoing: { label: "正在进行", cls: "badge-blue" },
+        upcoming: { label: "即将开始", cls: "badge-purple" },
+        sold: { label: "已成交", cls: "badge-green" },
+        failed: { label: "已流拍", cls: "badge-red" },
+        withdrawn: { label: "已撤回", cls: "badge-amber" },
+        suspended: { label: "已中止", cls: "badge-amber" },
+        ended: { label: "已结束", cls: "badge-slate" },
+        unknown: { label: "未知", cls: "badge-slate" },
+      };
+
+      const RISK_META = {
+        low: { label: "低风险", cls: "badge-green" },
+        medium: { label: "中风险", cls: "badge-amber" },
+        high: { label: "高风险", cls: "badge-red" },
+      };
+
+      const PLATFORM_META = {
+        taobao: { label: "淘宝", fullLabel: "淘宝法拍", cls: "badge-amber" },
+        jd: { label: "京东", fullLabel: "京东法拍", cls: "badge-red" },
+      };
+
+      const state = {
+        overview: null,
+        page: 1,
+        pageSize: 20,
+        total: 0,
+        activeTab: "items",
+        searchTimer: null,
+      };
+
+      const $ = (id) => document.getElementById(id);
+
+      function escapeHtml(val) {
+        if (val === null || val === undefined) return "";
+        return String(val)
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;")
+          .replace(/'/g, "&#39;");
+      }
+
+      function safeHttpUrl(url) {
+        if (!url) return "";
+        const s = String(url).trim();
+        return /^https?:\/\//i.test(s) ? s : "";
+      }
+
+      function fmtWan(yuan) {
+        if (yuan === null || yuan === undefined || Number.isNaN(Number(yuan))) return "-";
+        return (Number(yuan) / 10000).toFixed(2) + "万";
+      }
+
+      function fmtNum(val, suffix = "") {
+        if (val === null || val === undefined || val === "") return "-";
+        const n = Number(val);
+        if (Number.isNaN(n)) return escapeHtml(val);
+        return n.toLocaleString("zh-CN") + suffix;
+      }
+
+      function fmtDiscount(rate) {
+        if (rate === null || rate === undefined || Number.isNaN(Number(rate))) return "-";
+        const r = Number(rate);
+        return `${(r * 10).toFixed(2)}折`;
+      }
+
+      function badgeStatus(status) {
+        const meta = STATUS_META[status] || { label: status || "未知", cls: "badge-slate" };
+        return `<span class="badge ${meta.cls}">${escapeHtml(meta.label)}</span>`;
+      }
+
+      function badgeRisk(level) {
+        const meta = RISK_META[level] || { label: level || "-", cls: "badge-slate" };
+        return `<span class="badge ${meta.cls}">${escapeHtml(meta.label)}</span>`;
+      }
+
+      function badgeType(type) {
+        const label = TYPE_LABELS[type] || type || "其他";
+        const cls = type === "residential" ? "badge-blue" : "badge-slate";
+        return `<span class="badge ${cls}">${escapeHtml(label)}</span>`;
+      }
+
+      function platformLabel(platform, url = "") {
+        const key = (platform || "").toLowerCase();
+        if (PLATFORM_META[key]) return PLATFORM_META[key].label;
+        if (/jd\.com/i.test(url || "")) return "京东";
+        return platform || "淘宝";
+      }
+
+      function badgePlatform(platform) {
+        const key = (platform || "").toLowerCase();
+        const meta = PLATFORM_META[key] || { label: platform || "未知", cls: "badge-slate" };
+        return `<span class="badge ${meta.cls}">${escapeHtml(meta.label)}</span>`;
+      }
+
+      function showError(msg) {
+        const el = $("errorBanner");
+        if (!msg) {
+          el.style.display = "none";
+          el.textContent = "";
+          return;
+        }
+        el.textContent = msg;
+        el.style.display = "block";
+      }
+
+      async function apiGet(url) {
+        const resp = await fetch(url, { headers: { Accept: "application/json" } });
+        const data = await resp.json();
+        if (!resp.ok) {
+          throw new Error(data.error || `请求失败 (${resp.status})`);
+        }
+        return data;
+      }
+
+      function populateCitySelects(cities) {
+        const selects = [$("filterCity"), $("bCity"), $("sCity")];
+        for (const sel of selects) {
+          const prev = sel.value;
+          sel.innerHTML = '<option value="">全部城市</option>' +
+            cities.map((c) => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join("");
+          if (cities.includes(prev)) sel.value = prev;
+        }
+      }
+
+      function updateDistrictSelect() {
+        const sel = $("filterDistrict");
+        const prev = sel.value;
+        const selectedCity = $("filterCity").value;
+        const districts = (state.overview && state.overview.districts) || [];
+        const filtered = selectedCity
+          ? districts.filter((d) => d.city === selectedCity)
+          : districts;
+        sel.innerHTML = '<option value="">全部区县</option>' +
+          filtered
+            .map((d) => `<option value="${escapeHtml(d.district)}">${escapeHtml(d.district)} (${d.count})</option>`)
+            .join("");
+        if (filtered.some((d) => d.district === prev)) sel.value = prev;
+      }
+
+      async function loadOverview() {
+        const data = await apiGet("/api/overview");
+        state.overview = data;
+        $("dbMeta").textContent = `数据库: ${data.db_path}`;
+        const c = data.counts || {};
+        $("kpiProps").textContent = fmtNum(c.properties_total);
+        $("kpiRounds").textContent = fmtNum(c.rounds_total);
+        $("kpiResidential").textContent = fmtNum(c.residential_rounds);
+        $("kpiActive").textContent = fmtNum(c.active_rounds);
+        $("kpiSold").textContent = fmtNum(c.sold_rounds);
+        $("kpiFailed").textContent = fmtNum(c.failed_rounds);
+        $("kpiEnriched").textContent = fmtNum(c.enriched_rounds);
+        populateCitySelects(data.cities || []);
+        updateDistrictSelect();
+      }
+
+      function buildItemsQuery() {
+        const qs = new URLSearchParams();
+        const q = $("filterQ").value.trim();
+        const platform = $("filterPlatform").value;
+        const city = $("filterCity").value;
+        const district = $("filterDistrict").value;
+        const ptype = $("filterType").value;
+        const status = $("filterStatus").value;
+        const stage = $("filterStage").value;
+        const risk = $("filterRisk").value;
+        const sort = $("filterSort").value;
+        if (q) qs.set("q", q);
+        if (platform !== "all") qs.set("platform", platform);
+        if (city) qs.set("city", city);
+        if (district) qs.set("district", district);
+        if (ptype !== "all") qs.set("property_type", ptype);
+        if (status !== "all") qs.set("status", status);
+        if (stage !== "all") qs.set("stage", stage);
+        if (risk !== "all") qs.set("risk_level", risk);
+        if ($("filterFullShare").checked) qs.set("only_full_share", "1");
+        if ($("filterEnriched").checked) qs.set("only_enriched", "1");
+        qs.set("sort", sort);
+        qs.set("page", String(state.page));
+        qs.set("page_size", String(state.pageSize));
+        return qs.toString();
+      }
+
+      async function loadItems() {
+        const body = $("itemsBody");
+        try {
+          const data = await apiGet(`/api/items?${buildItemsQuery()}`);
+          state.total = data.total || 0;
+          state.page = data.page || 1;
+          const totalPages = Math.max(1, Math.ceil(state.total / state.pageSize));
+          $("itemsSummary").textContent = `共 ${state.total} 条记录`;
+          $("pageIndicator").textContent = `${state.page} / ${totalPages}`;
+          $("btnPrevPage").disabled = state.page <= 1;
+          $("btnNextPage").disabled = state.page >= totalPages;
+
+          const items = data.items || [];
+          if (!items.length) {
+            body.innerHTML = '<tr><td colspan="11" class="empty-state"><strong>暂无符合条件的标的</strong>尝试放宽筛选条件，或运行 <code>fph sync</code> 采集更多数据。</td></tr>';
+            return;
+          }
+
+          body.innerHTML = items.map((it) => {
+            const refPrice = it.current_price !== null ? it.current_price : it.initial_price;
+            const loc = [it.city, it.district, it.community_name].filter(Boolean).join(" · ");
+            const url = safeHttpUrl(it.url);
+            const roundBadge = it.total_rounds_for_property > 1
+              ? `<span class="badge badge-purple">共${it.total_rounds_for_property}轮</span>`
+              : "";
+            const enrichedBadge = it.detail_fetched_at
+              ? '<span class="badge badge-green">已抓详情</span>'
+              : "";
+            const partialBadge = it.is_partial_share
+              ? `<span class="badge badge-red">部分产权 ${escapeHtml(it.ownership_share || "")}</span>`
+              : "";
+            const tagsHtml = (it.risk_tags || [])
+              .map((t) => `<span class="badge badge-amber">${escapeHtml(t)}</span>`)
+              .join("");
+
+            return `
+              <tr class="clickable-row" data-round-id="${it.round_id}">
+                <td class="title-cell">
+                  <div class="item-title">${escapeHtml(it.title)}</div>
+                  <div class="item-sub">
+                    ${badgePlatform(it.platform)}
+                    ${badgeType(it.property_type)}
+                    ${roundBadge}
+                    ${enrichedBadge}
+                    ${partialBadge}
+                    ${loc ? `<span>${escapeHtml(loc)}</span>` : ""}
+                  </div>
+                  ${tagsHtml ? `<div class="item-sub" style="margin-top:4px;">${tagsHtml}</div>` : ""}
+                </td>
+                <td><span class="badge badge-slate">${escapeHtml(it.stage || "未知")}</span></td>
+                <td>${badgeStatus(it.status)}</td>
+                <td class="num">
+                  <div class="price-main">${fmtWan(refPrice)}</div>
+                  <div class="price-sub">起拍 ${fmtWan(it.initial_price)}</div>
+                </td>
+                <td class="num">${fmtWan(it.consult_price)}</td>
+                <td class="num">${fmtDiscount(it.discount_rate)}</td>
+                <td class="num">
+                  <div>${it.area_sqm !== null ? fmtNum(it.area_sqm, "㎡") : "-"}</div>
+                  <div class="price-sub">${it.unit_price !== null ? fmtNum(it.unit_price, "元/㎡") : "-"}</div>
+                </td>
+                <td class="num">
+                  <div>围观 ${fmtNum(it.watch_count)}</div>
+                  <div class="price-sub">报名 ${fmtNum(it.apply_count)} · 出价 ${fmtNum(it.bid_count)}</div>
+                </td>
+                <td class="num">
+                  <div>${escapeHtml(it.end_time || "-")}</div>
+                  <div class="price-sub">${escapeHtml(it.court_name || "")}</div>
+                </td>
+                <td>${badgeRisk(it.risk_level)}</td>
+                <td>
+                  <div class="actions-cell">
+                    <button class="btn btn-sm btn-detail" data-round-id="${it.round_id}" type="button">详情</button>
+                    ${url ? `<a class="btn btn-sm" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()">${escapeHtml(platformLabel(it.platform, url))}</a>` : ""}
+                  </div>
+                </td>
+              </tr>
+            `;
+          }).join("");
+        } catch (err) {
+          showError(err.message);
+          body.innerHTML = `<tr><td colspan="11" class="empty-state">${escapeHtml(err.message)}</td></tr>`;
+        }
+      }
+
+      async function openDetail(roundId) {
+        const backdrop = $("detailBackdrop");
+        const body = $("drawerBody");
+        const ext = $("drawerExternalLink");
+        $("drawerTitle").textContent = "正在加载标的详情...";
+        $("drawerBadges").innerHTML = "";
+        ext.style.display = "none";
+        body.innerHTML = '<div class="empty-state">加载中...</div>';
+        backdrop.classList.add("open");
+        backdrop.setAttribute("aria-hidden", "false");
+
+        try {
+          const d = await apiGet(`/api/items/${roundId}`);
+          $("drawerTitle").textContent = d.title || `标的 #${roundId}`;
+          $("drawerBadges").innerHTML = [
+            badgePlatform(d.platform),
+            badgeType(d.property_type),
+            `<span class="badge badge-slate">${escapeHtml(d.stage || "未知")}</span>`,
+            badgeStatus(d.status),
+            badgeRisk(d.risk_level),
+            d.is_partial_share ? `<span class="badge badge-red">部分产权 ${escapeHtml(d.ownership_share || "")}</span>` : "",
+            `<span class="mono">item_id: ${escapeHtml(d.item_id)}</span>`,
+          ].filter(Boolean).join(" ");
+
+          const url = safeHttpUrl(d.url);
+          if (url) {
+            ext.href = url;
+            ext.textContent = `打开${platformLabel(d.platform, url)}原页`;
+            ext.style.display = "inline-flex";
+          }
+
+          const tagsHtml = (d.risk_tags && d.risk_tags.length)
+            ? d.risk_tags.map((t) => `<span class="badge badge-amber">${escapeHtml(t)}</span>`).join(" ")
+            : '<span style="color:var(--text-subtle);">暂未命中风险标签</span>';
+
+          const roundsHtml = (d.related_rounds || []).map((r) => `
+            <tr class="${r.round_id === d.round_id ? "highlight-row" : ""}">
+              <td>${badgePlatform(r.platform)}</td>
+              <td class="mono">${escapeHtml(r.item_id)}</td>
+              <td>${escapeHtml(r.stage || "未知")}</td>
+              <td>${badgeStatus(r.status)}</td>
+              <td class="num">${fmtWan(r.initial_price)}</td>
+              <td class="num">${fmtWan(r.current_price)}</td>
+              <td class="num">${fmtDiscount(r.discount_rate)}</td>
+              <td class="num">${fmtNum(r.bid_count)} / ${fmtNum(r.apply_count)}</td>
+              <td class="num">${escapeHtml(r.end_time || "-")}</td>
+            </tr>
+          `).join("");
+
+          const snapshotsHtml = (d.snapshots || []).length
+            ? d.snapshots.map((s) => `
+              <tr>
+                <td class="num">${escapeHtml(s.captured_at)}</td>
+                <td>${badgeStatus(s.status)}</td>
+                <td class="num">${fmtWan(s.current_price)}</td>
+                <td class="num">${fmtNum(s.bid_count)}</td>
+                <td class="num">${fmtNum(s.apply_count)}</td>
+                <td class="num">${fmtNum(s.watch_count)}</td>
+              </tr>
+            `).join("")
+            : '<tr><td colspan="6" style="color:var(--text-subtle);text-align:center;">暂无价格变更快照</td></tr>';
+
+          const noticeSection = d.detail_fetched_at
+            ? `<div class="text-box">${escapeHtml(d.notice_text || "（公告正文为空）")}</div>`
+            : `<div class="text-box" style="color:var(--text-subtle);">尚未补抓该标的的详情页与拍卖公告（列表页仅含基础摘要）。\n如需查看建筑面积、处置法院、占用/税费风险条款，可低频运行：fph enrich --limit 5</div>`;
+
+          const surveySection = d.survey_text
+            ? `<div class="section-title">标的物调查 / 描述</div><div class="text-box">${escapeHtml(d.survey_text)}</div>`
+            : "";
+
+          body.innerHTML = `
+            <div class="detail-grid">
+              <div class="detail-kv"><div class="detail-k">城市 / 区县</div><div class="detail-v">${escapeHtml([d.province, d.city, d.district].filter(Boolean).join(" / ") || "-")}</div></div>
+              <div class="detail-kv"><div class="detail-k">小区名称</div><div class="detail-v">${escapeHtml(d.community_name || "-")}</div></div>
+              <div class="detail-kv"><div class="detail-k">建筑面积 / 单价</div><div class="detail-v num">${d.area_sqm !== null ? fmtNum(d.area_sqm, "㎡") : "-"} · ${d.unit_price !== null ? fmtNum(d.unit_price, "元/㎡") : "-"}</div></div>
+              <div class="detail-kv"><div class="detail-k">起拍价 / 当前(成交)价</div><div class="detail-v num">${fmtWan(d.initial_price)} / ${fmtWan(d.current_price)}</div></div>
+              <div class="detail-kv"><div class="detail-k">评估价 / 折扣</div><div class="detail-v num">${fmtWan(d.consult_price)} / ${fmtDiscount(d.discount_rate)}</div></div>
+              <div class="detail-kv"><div class="detail-k">保证金</div><div class="detail-v num">${fmtWan(d.deposit_price)}</div></div>
+              <div class="detail-kv"><div class="detail-k">处置法院</div><div class="detail-v">${escapeHtml(d.court_name || "-")}</div></div>
+              <div class="detail-kv"><div class="detail-k">开拍 / 结拍时间</div><div class="detail-v num">${escapeHtml(d.start_time || "-")} ~ ${escapeHtml(d.end_time || "-")}</div></div>
+              <div class="detail-kv"><div class="detail-k">详细地址</div><div class="detail-v">${escapeHtml(d.address || "-")}</div></div>
+              <div class="detail-kv"><div class="detail-k">详情补抓时间</div><div class="detail-v num">${escapeHtml(d.detail_fetched_at || "未补抓")}</div></div>
+            </div>
+
+            <div class="section-title">风险提示标签</div>
+            <div style="display:flex;flex-wrap:wrap;gap:6px;">${tagsHtml}</div>
+
+            <div class="section-title">同套房拍卖轨迹 <span class="badge badge-slate">property_key: ${escapeHtml(d.property_key)}</span></div>
+            <div class="table-wrap card">
+              <table>
+                <thead>
+                  <tr><th>平台</th><th>item_id</th><th>阶段</th><th>状态</th><th>起拍价</th><th>当前/成交价</th><th>折扣</th><th>出价/报名</th><th>结拍时间</th></tr>
+                </thead>
+                <tbody>${roundsHtml}</tbody>
+              </table>
+            </div>
+
+            <div class="section-title">采集快照记录</div>
+            <div class="table-wrap card">
+              <table>
+                <thead>
+                  <tr><th>采集时间</th><th>状态</th><th>当前价</th><th>出价</th><th>报名</th><th>围观</th></tr>
+                </thead>
+                <tbody>${snapshotsHtml}</tbody>
+              </table>
+            </div>
+
+            <div class="section-title">拍卖公告正文</div>
+            ${noticeSection}
+            ${surveySection}
+          `;
+        } catch (err) {
+          body.innerHTML = `<div class="empty-state">加载详情失败: ${escapeHtml(err.message)}</div>`;
+        }
+      }
+
+      function closeDrawer() {
+        $("detailBackdrop").classList.remove("open");
+        $("detailBackdrop").setAttribute("aria-hidden", "true");
+      }
+
+      async function loadBargains() {
+        const body = $("bargainsBody");
+        const qs = new URLSearchParams();
+        if ($("bCity").value) qs.set("city", $("bCity").value);
+        if ($("bDistrict").value.trim()) qs.set("district", $("bDistrict").value.trim());
+        if ($("bMaxDiscount").value) qs.set("max_discount", $("bMaxDiscount").value);
+        if ($("bMaxTotal").value) qs.set("max_total", $("bMaxTotal").value);
+        if ($("bMinArea").value) qs.set("min_area", $("bMinArea").value);
+        qs.set("max_risk", $("bMaxRisk").value);
+        if ($("bStage").value) qs.set("stage", $("bStage").value);
+        qs.set("limit", "100");
+
+        try {
+          const data = await apiGet(`/api/bargains?${qs.toString()}`);
+          const rows = data.rows || [];
+          if (!rows.length) {
+            body.innerHTML = '<tr><td colspan="12" class="empty-state"><strong>暂无符合条件的在拍/预告捡漏候选</strong>当前入库若以历史结拍样本为主，或折扣/风险阈值较严，可切换到「房源列表」或「区域行情」查看全部数据。</td></tr>';
+            return;
+          }
+          body.innerHTML = rows.map((r) => {
+            const url = safeHttpUrl(r.url);
+            const tags = (r.risk_tags || []).map((t) => `<span class="badge badge-amber">${escapeHtml(t)}</span>`).join(" ");
+            return `
+              <tr>
+                <td>${escapeHtml(r.city || "-")} · ${escapeHtml(r.district || "-")}</td>
+                <td class="title-cell">
+                  <div class="item-title">${escapeHtml(r.title)}</div>
+                  <div class="item-sub">${escapeHtml(r.community_name || "")} ${tags}</div>
+                </td>
+                <td><span class="badge badge-slate">${escapeHtml(r.stage || "未知")}</span></td>
+                <td class="num price-main">${r.price_wan !== null ? escapeHtml(r.price_wan) + "万" : "-"}</td>
+                <td class="num">${r.consult_wan !== null ? escapeHtml(r.consult_wan) + "万" : "-"}</td>
+                <td class="num">${fmtDiscount(r.discount_rate)}</td>
+                <td class="num">${r.area_sqm !== null ? fmtNum(r.area_sqm, "㎡") : "-"}</td>
+                <td class="num">${r.unit_price !== null ? fmtNum(r.unit_price) : "-"}</td>
+                <td class="num">${fmtNum(r.apply_count)} / ${fmtNum(r.bid_count)}</td>
+                <td>${badgeRisk(r.risk_level)}</td>
+                <td class="num">${escapeHtml(r.end_time || "-")}</td>
+                <td>${url ? `<a class="btn btn-sm" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(platformLabel(r.platform, url))}</a>` : "-"}</td>
+              </tr>
+            `;
+          }).join("");
+        } catch (err) {
+          body.innerHTML = `<tr><td colspan="12" class="empty-state">${escapeHtml(err.message)}</td></tr>`;
+        }
+      }
+
+      async function loadStats() {
+        const qs = new URLSearchParams();
+        if ($("sCity").value) qs.set("city", $("sCity").value);
+        if ($("sByDistrict").checked) qs.set("by_district", "1");
+        if ($("sByMonth").checked) qs.set("by_month", "1");
+
+        const byDistrict = $("sByDistrict").checked;
+        const byMonth = $("sByMonth").checked;
+        const headCols = ["城市"];
+        if (byDistrict) headCols.push("区县");
+        if (byMonth) headCols.push("月份");
+        headCols.push("标的数", "拍次数", "在拍/预告", "成交", "流拍", "成交率", "成交均折", "成交均价(元/㎡)", "在拍均价(元/㎡)");
+        $("statsHead").innerHTML = "<tr>" + headCols.map((h) => `<th>${escapeHtml(h)}</th>`).join("") + "</tr>";
+
+        const body = $("statsBody");
+        try {
+          const data = await apiGet(`/api/stats?${qs.toString()}`);
+          const rows = data.rows || [];
+          if (!rows.length) {
+            body.innerHTML = `<tr><td colspan="${headCols.length}" class="empty-state"><strong>暂无纯住宅统计样本</strong></td></tr>`;
+            return;
+          }
+          body.innerHTML = rows.map((r) => {
+            const cr = r.clearance_rate_pct !== null && r.clearance_rate_pct !== undefined ? Number(r.clearance_rate_pct) : null;
+            const disc = r.avg_sold_discount !== null && r.avg_sold_discount !== undefined ? Number(r.avg_sold_discount) : null;
+            const crCell = cr !== null
+              ? `<div class="meter-wrap"><div class="meter-track"><div class="meter-fill green" style="width:${Math.min(100, Math.max(0, cr))}%"></div></div><span class="num">${cr.toFixed(2)}%</span></div>`
+              : "-";
+            const discCell = disc !== null
+              ? `<div class="meter-wrap"><div class="meter-track"><div class="meter-fill" style="width:${Math.min(100, Math.max(0, disc * 100))}%"></div></div><span class="num">${(disc * 10).toFixed(2)}折</span></div>`
+              : "-";
+
+            const cells = [`<td><strong>${escapeHtml(r.city || "-")}</strong></td>`];
+            if (byDistrict) cells.push(`<td>${escapeHtml(r.district || "(未识别区县)")}</td>`);
+            if (byMonth) cells.push(`<td class="num">${escapeHtml(r.month || "-")}</td>`);
+            cells.push(
+              `<td class="num">${fmtNum(r.unique_properties)}</td>`,
+              `<td class="num">${fmtNum(r.total_rounds)}</td>`,
+              `<td class="num">${fmtNum(r.active_count)}</td>`,
+              `<td class="num">${fmtNum(r.sold_count)}</td>`,
+              `<td class="num">${fmtNum(r.failed_count)}</td>`,
+              `<td>${crCell}</td>`,
+              `<td>${discCell}</td>`,
+              `<td class="num">${fmtNum(r.avg_sold_unit_price)}</td>`,
+              `<td class="num">${fmtNum(r.avg_active_unit_price)}</td>`
+            );
+            return `<tr>${cells.join("")}</tr>`;
+          }).join("");
+        } catch (err) {
+          body.innerHTML = `<tr><td colspan="${headCols.length}" class="empty-state">${escapeHtml(err.message)}</td></tr>`;
+        }
+      }
+
+      async function loadLogs() {
+        const body = $("logsBody");
+        try {
+          const data = await apiGet("/api/sync-runs");
+          const rows = data.rows || [];
+          if (!rows.length) {
+            body.innerHTML = '<tr><td colspan="13" class="empty-state">暂无采集任务日志</td></tr>';
+            return;
+          }
+          body.innerHTML = rows.map((r) => {
+            const stCls = r.status === "success" ? "badge-green" : (r.status === "auth_required" ? "badge-amber" : "badge-red");
+            return `
+              <tr>
+                <td class="num">${r.id}</td>
+                <td>${escapeHtml(r.provider)}</td>
+                <td>${escapeHtml(r.region_name)}</td>
+                <td><span class="badge ${stCls}">${escapeHtml(r.status)}</span></td>
+                <td class="num">${fmtNum(r.pages_fetched)}</td>
+                <td class="num">${fmtNum(r.items_seen)}</td>
+                <td class="num">${fmtNum(r.properties_created)}</td>
+                <td class="num">${fmtNum(r.rounds_upserted)}</td>
+                <td class="num">${fmtNum(r.details_enriched)}</td>
+                <td class="num">${fmtNum(r.ended_refreshed)}</td>
+                <td class="num">${escapeHtml(r.started_at || "-")}</td>
+                <td class="num">${escapeHtml(r.finished_at || "-")}</td>
+                <td style="max-width:280px;word-break:break-word;color:var(--text-muted);">${escapeHtml(r.message || "-")}</td>
+              </tr>
+            `;
+          }).join("");
+        } catch (err) {
+          body.innerHTML = `<tr><td colspan="13" class="empty-state">${escapeHtml(err.message)}</td></tr>`;
+        }
+      }
+
+      function switchTab(tabName) {
+        state.activeTab = tabName;
+        document.querySelectorAll(".tab-btn").forEach((btn) => {
+          btn.classList.toggle("active", btn.dataset.tab === tabName);
+        });
+        document.querySelectorAll(".tab-panel").forEach((panel) => {
+          panel.classList.toggle("active", panel.id === `tab-${tabName}`);
+        });
+        if (tabName === "items") loadItems();
+        if (tabName === "bargains") loadBargains();
+        if (tabName === "stats") loadStats();
+        if (tabName === "logs") loadLogs();
+      }
+
+      async function refreshAll() {
+        showError("");
+        try {
+          await loadOverview();
+          switchTab(state.activeTab);
+        } catch (err) {
+          showError(err.message);
+        }
+      }
+
+      // Bind events
+      document.querySelectorAll(".tab-btn").forEach((btn) => {
+        btn.addEventListener("click", () => switchTab(btn.dataset.tab));
+      });
+
+      $("btnRefreshAll").addEventListener("click", refreshAll);
+
+      $("filterQ").addEventListener("input", () => {
+        clearTimeout(state.searchTimer);
+        state.searchTimer = setTimeout(() => {
+          state.page = 1;
+          loadItems();
+        }, 280);
+      });
+      $("filterQ").addEventListener("keydown", (e) => {
+        if (e.key === "Enter") {
+          clearTimeout(state.searchTimer);
+          state.page = 1;
+          loadItems();
+        }
+      });
+
+      $("filterCity").addEventListener("change", () => {
+        updateDistrictSelect();
+        state.page = 1;
+        loadItems();
+      });
+
+      ["filterPlatform", "filterDistrict", "filterType", "filterStatus", "filterStage", "filterRisk", "filterSort", "filterFullShare", "filterEnriched"]
+        .forEach((id) => {
+          $(id).addEventListener("change", () => {
+            state.page = 1;
+            loadItems();
+          });
+        });
+
+      $("pageSizeSelect").addEventListener("change", () => {
+        state.pageSize = parseInt($("pageSizeSelect").value, 10) || 20;
+        state.page = 1;
+        loadItems();
+      });
+
+      $("btnPrevPage").addEventListener("click", () => {
+        if (state.page > 1) {
+          state.page -= 1;
+          loadItems();
+        }
+      });
+      $("btnNextPage").addEventListener("click", () => {
+        const totalPages = Math.max(1, Math.ceil(state.total / state.pageSize));
+        if (state.page < totalPages) {
+          state.page += 1;
+          loadItems();
+        }
+      });
+
+      $("btnResetItems").addEventListener("click", () => {
+        $("filterQ").value = "";
+        $("filterPlatform").value = "all";
+        $("filterCity").value = "";
+        updateDistrictSelect();
+        $("filterDistrict").value = "";
+        $("filterType").value = "all";
+        $("filterStatus").value = "all";
+        $("filterStage").value = "all";
+        $("filterRisk").value = "all";
+        $("filterSort").value = "end_time_desc";
+        $("filterFullShare").checked = false;
+        $("filterEnriched").checked = false;
+        state.page = 1;
+        loadItems();
+      });
+
+      $("itemsBody").addEventListener("click", (e) => {
+        const btn = e.target.closest(".btn-detail");
+        const row = e.target.closest("tr.clickable-row");
+        const target = btn || row;
+        if (target && target.dataset.roundId) {
+          openDetail(Number(target.dataset.roundId));
+        }
+      });
+
+      $("btnCloseDrawer").addEventListener("click", closeDrawer);
+      $("detailBackdrop").addEventListener("click", (e) => {
+        if (e.target === $("detailBackdrop")) closeDrawer();
+      });
+      document.addEventListener("keydown", (e) => {
+        if (e.key === "Escape") closeDrawer();
+      });
+
+      $("btnSearchBargains").addEventListener("click", loadBargains);
+      $("btnLoadStats").addEventListener("click", loadStats);
+      $("btnReloadLogs").addEventListener("click", loadLogs);
+      ["sCity", "sByDistrict", "sByMonth"].forEach((id) => {
+        $(id).addEventListener("change", loadStats);
+      });
+
+      // Boot
+      refreshAll();
+    })();
+  </script>
+</body>
+</html>

@@ -11,10 +11,11 @@
    - **列表同步**：同步目标城市的「正在进行 / 即将开始」与「已结束」房源。
    - **详情与公告补抓（每套仅抓 1 次）**：自动提取建筑面积、折合单价、处置法院，并自动标出风险标签（`不交吉/不腾退`、`有人占用`、`带租约`、`买受人全额担税`、`欠费风险`、`无证/产权瑕疵`、`部分产权`等）。
    - **结拍回刷**：仅对已过结拍时间但状态尚未终结的标的回刷最终成交价与出价次数。
-3. **可插拔采集驱动（一期支持 `ego(lite)` / `ego-browser`）**
-   - 采集层与分析库完全解耦。一期通过 `ego-browser nodejs` 在独立 `Task Space` 中复用本机 `ego(lite)` 登录态，不抢占日常浏览标签页，也不消耗 LLM Token。
-   - 遇到登录失效或安全验证时，安全暂停并提示你在 `ego(lite)` 对应 Space 中手动接管，不做任何绕过或破解。
-   - 后续扩展京东法拍、公拍网或纯 HTTP 驱动时，只需新增 `AuctionProvider` 实现即可无缝写入同一 SQLite 分析库。
+3. **可插拔采集驱动（支持阿里/淘宝法拍 `taobao_ego` 与京东司法拍卖 `jd_ego`）**
+   - 采集层与分析库完全解耦。通过 `ego-browser nodejs` 在独立 `Task Space` 中复用本机 `ego(lite)` 登录态，不抢占日常浏览标签页，也不消耗 LLM Token。
+   - 淘宝与京东采集到同一套房产时，按标准化 `property_key` 自动归并到同一 `property_id`，保留各自平台的轮次记录与价格变化。
+   - 遇到登录失效、弹窗确认或安全验证时，安全暂停并提示你在 `ego(lite)` 对应 Space 中手动接管，不做任何绕过或破解。
+   - 支持 `--provider taobao` / `--provider jd` 按平台单独同步或补抓详情。
 
 ---
 
@@ -62,7 +63,13 @@ fph sync
 # 仅同步福州，且先只抓 2 页试跑
 fph sync --region 福州 --max-pages 2
 
-# 单独补抓尚未抓取详情/公告的标的
+# 仅同步京东司法拍卖（福州住宅，1 页试跑）
+fph sync --provider jd --region 福州 --max-pages 1 --no-enrich --no-refresh-ended
+
+# 仅同步淘宝法拍并补抓详情
+fph sync --provider taobao --region 福州 --max-pages 2
+
+# 单独补抓尚未抓取详情/公告的标的（可加 --provider jd 或 taobao）
 fph enrich --limit 20
 ```
 
@@ -107,7 +114,17 @@ fph export --dataset deals --city 福州 --format csv
 fph export --dataset bargains --format json
 ```
 
-### 5. 定时运行
+### 5. 本地 Web 看板（可视化浏览与筛选）
+
+```bash
+# 启动本地 Web 数据看板（默认 http://127.0.0.1:8765 并自动打开浏览器）
+fph web
+
+# 指定端口且不自动弹出浏览器
+fph web --port 8765 --no-open
+```
+
+### 6. 定时运行
 
 - **方式 A：内置跨平台常驻调度**（适合终端常开，支持随机抖动）
   ```bash

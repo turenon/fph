@@ -11,9 +11,15 @@ from typing import Any
 from fph.analytics import export_dataset, find_bargain_candidates, get_market_summary
 from fph.config import AppConfig, load_config
 from fph.db import AuctionDB, now_str
-from fph.pipeline import SyncPipeline, build_provider
-from fph.providers.taobao_urls import build_list_url, expand_status_queries
+from fph.pipeline import (
+    SyncPipeline,
+    build_provider,
+    build_providers,
+    normalize_provider_name,
+    resolve_region_provider_name,
+)
 from fph.scheduler import run_scheduler
+from fph.web import run_web_server
 
 
 def _setup_logging(verbose: bool = False) -> None:
@@ -104,25 +110,36 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
         round_cnt = db.conn.execute("SELECT COUNT(*) FROM auction_rounds").fetchone()[0]
         print(f"当前入库统计: 标的物 {prop_cnt} 套 | 拍卖轮次 {round_cnt} 条")
 
-    provider = build_provider(cfg)
-    ok, msg = provider.check_ready()
-    print(f"采集驱动 ({cfg.provider.name}): {'[OK]' if ok else '[WARN]'} {msg}")
+    providers = build_providers(cfg)
+    all_ok = True
+    for pname, prov in providers.items():
+        ok, msg = prov.check_ready()
+        all_ok = all_ok and ok
+        print(f"采集驱动 ({pname} / {prov.platform}): {'[OK]' if ok else '[WARN]'} {msg}")
 
     print("已配置监控区域与目标 URL 预览:")
     for region in cfg.regions:
+        pname = resolve_region_provider_name(cfg, region)
+        prov = providers[pname]
         for scope in region.status_scopes:
-            for label, st_param in expand_status_queries(scope):
-                print(f"  - {region.name} [{label}]: {build_list_url(region, st_param=st_param, page=1)}")
-    return 0 if ok else 1
+            for label, st_param in prov.expand_status_queries(scope):
+                preview_url = prov.preview_list_url(region, st_param=st_param, page=1)
+                print(f"  - [{prov.platform}] {region.name} [{label}]: {preview_url}")
+    return 0 if all_ok else 1
 
 
 def _cmd_sync(args: argparse.Namespace) -> int:
     cfg = _load_or_default(args.config)
-    provider = build_provider(cfg)
+    providers = build_providers(cfg)
+    if args.provider:
+        pnorm = normalize_provider_name(args.provider)
+        if pnorm not in providers:
+            providers[pnorm] = build_provider(cfg, pnorm)
     with AuctionDB(cfg.storage.db_path) as db:
-        pipeline = SyncPipeline(cfg, db, provider)
+        pipeline = SyncPipeline(cfg, db, providers=providers)
         summaries = pipeline.run_full_cycle(
             region_filter=args.region,
+            provider_filter=args.provider,
             max_pages=args.max_pages,
             enrich_details=not args.no_enrich,
             refresh_ended=not args.no_refresh_ended,
@@ -131,7 +148,7 @@ def _cmd_sync(args: argparse.Namespace) -> int:
     exit_code = 0
     for s in summaries:
         print(
-            f"[{s.region_name}] 状态={s.status} | 抓取页数={s.pages_fetched} | "
+            f"[{s.provider}/{s.region_name}] 状态={s.status} | 抓取页数={s.pages_fetched} | "
             f"扫描条目={s.items_seen} | 新增标的={s.properties_created} | "
             f"补抓详情={s.details_enriched} | 回刷结拍={s.ended_refreshed}"
         )
@@ -144,10 +161,17 @@ def _cmd_sync(args: argparse.Namespace) -> int:
 
 def _cmd_enrich(args: argparse.Namespace) -> int:
     cfg = _load_or_default(args.config)
-    provider = build_provider(cfg)
+    providers = build_providers(cfg)
+    if args.provider:
+        pnorm = normalize_provider_name(args.provider)
+        if pnorm not in providers:
+            providers[pnorm] = build_provider(cfg, pnorm)
     with AuctionDB(cfg.storage.db_path) as db:
-        pipeline = SyncPipeline(cfg, db, provider)
-        count, auth_err = pipeline.enrich_missing_details(limit=args.limit)
+        pipeline = SyncPipeline(cfg, db, providers=providers)
+        count, auth_err = pipeline.enrich_missing_details(
+            limit=args.limit,
+            provider_filter=args.provider,
+        )
         print(f"本次补抓详情与公告完成: {count} 条")
         if auth_err:
             print(f"中断提示: {auth_err}")
@@ -249,6 +273,21 @@ def _cmd_schedule(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_web(args: argparse.Namespace) -> int:
+    cfg = _load_or_default(args.config)
+    try:
+        run_web_server(
+            cfg,
+            host=args.host,
+            port=args.port,
+            open_browser=not args.no_open,
+        )
+    except RuntimeError as exc:
+        print(f"启动失败: {exc}", file=sys.stderr)
+        return 1
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="fph",
@@ -269,6 +308,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_sync = sub.add_parser("sync", help="执行一次列表同步 + 新标的详情补抓 + 结拍结果回刷")
     p_sync.add_argument("--region", help="仅同步名称或城市包含指定关键字的区域（如 福州 / 龙岩）")
+    p_sync.add_argument("--provider", help="仅同步指定采集平台（如 taobao / jd / taobao_ego / jd_ego）")
     p_sync.add_argument("--max-pages", type=int, help="覆盖单次最大翻页数")
     p_sync.add_argument("--no-enrich", action="store_true", help="本次跳过详情/公告补抓")
     p_sync.add_argument("--no-refresh-ended", action="store_true", help="本次跳过已结拍结果回刷")
@@ -276,6 +316,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_enrich = sub.add_parser("enrich", help="单独补抓缺失详情与公告的标的")
     p_enrich.add_argument("--limit", type=int, default=20, help="本次最多补抓条数")
+    p_enrich.add_argument("--provider", help="仅补抓指定采集平台（如 taobao / jd / taobao_ego / jd_ego）")
     p_enrich.set_defaults(func=_cmd_enrich)
 
     p_stats = sub.add_parser("stats", help="查看区域住宅法拍行情统计（成交率、均折、单价）")
@@ -306,6 +347,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_sched.add_argument("--interval", type=int, help="覆盖执行间隔（分钟）")
     p_sched.add_argument("--delay-first", action="store_true", help="启动后先等待一个周期再首次执行")
     p_sched.set_defaults(func=_cmd_schedule)
+
+    p_web = sub.add_parser("web", help="启动本地 Web 数据看板（浏览器可视化查看与筛选）")
+    p_web.add_argument("--host", default="127.0.0.1", help="监听地址（默认 127.0.0.1）")
+    p_web.add_argument("--port", type=int, default=8765, help="监听端口（默认 8765）")
+    p_web.add_argument("--no-open", action="store_true", help="启动后不自动打开浏览器")
+    p_web.set_defaults(func=_cmd_web)
 
     return parser
 

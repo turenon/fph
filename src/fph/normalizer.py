@@ -153,33 +153,33 @@ def normalize_stage(stage_hint: str = "", title: str = "") -> str:
 
 def normalize_status(status_hint: str = "", bid_count: int | None = None) -> str:
     s = (status_hint or "").strip().lower()
-    if s in {"upcoming", "todo", "0", "即将开始", "预告中"}:
+    if s in {"upcoming", "todo", "0", "即将开始", "即将开拍", "预告中"}:
         return "upcoming"
-    if s in {"ongoing", "doing", "1", "正在进行", "进行中", "竞拍中"}:
+    if s in {"ongoing", "doing", "1", "正在进行", "进行中", "竞拍中", "拍卖中"}:
         return "ongoing"
-    if s in {"sold", "done", "成交", "已成交", "拍卖成交", "变卖成交"}:
+    if s in {"sold", "done", "成交", "已成交", "拍卖成交", "变卖成交", "竞价成功"}:
         return "sold"
-    if s in {"failed", "failure", "流拍", "已流拍", "无人出价"}:
+    if s in {"failed", "failure", "流拍", "已流拍", "无人出价", "流标"}:
         return "failed"
-    if s in {"withdrawn", "revoke", "撤回", "已撤回", "撤销"}:
+    if s in {"withdrawn", "revoke", "撤回", "已撤回", "撤销", "已下架", "下架"}:
         return "withdrawn"
-    if s in {"suspended", "break", "中止", "已中止", "暂缓"}:
+    if s in {"suspended", "break", "中止", "已中止", "暂缓", "已暂缓", "暂停", "已暂停"}:
         return "suspended"
     if s in {"ended", "2", "已结束", "结束"}:
         if bid_count is not None:
             return "sold" if bid_count > 0 else "failed"
         return "ended"
-    if "成交" in s:
+    if "成交" in s or "竞价成功" in s:
         return "sold"
-    if "流拍" in s:
+    if "流拍" in s or "流标" in s:
         return "failed"
-    if "撤回" in s or "撤销" in s:
+    if "撤回" in s or "撤销" in s or "下架" in s:
         return "withdrawn"
-    if "中止" in s or "暂缓" in s:
+    if "中止" in s or "暂缓" in s or "暂停" in s:
         return "suspended"
-    if "即将" in s:
+    if "即将" in s or "预告" in s:
         return "upcoming"
-    if "进行" in s:
+    if "进行" in s or "拍卖中" in s:
         return "ongoing"
     return "unknown"
 
@@ -222,7 +222,7 @@ def classify_property_type(title: str, detail_text: str = "", category_hint: str
     if re.search(r"(商铺|店面|商业用房|写字楼|办公楼|办公室|酒店|宾馆|商场|门面|底商)", t) and "住宅" not in t:
         return "commercial"
 
-    if has_residential_unit or "住宅" in combined or category_hint in {"50025969", "住宅用房"}:
+    if has_residential_unit or "住宅" in combined or category_hint in {"50025969", "12728", "住宅用房"}:
         return "residential"
 
     if re.search(r"(商铺|商业|办公|写字楼)", combined):

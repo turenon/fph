@@ -262,8 +262,14 @@ class AuctionDB:
             province=item.province,
             city=item.city,
             explicit_district=item.district,
+            address=item.address,
             category_hint=item.category_hint,
+            explicit_area=item.area_sqm,
         )
+
+        effective_community = item.community_name or parsed.community_name
+        effective_address = item.address or item.title
+        effective_area = item.area_sqm if item.area_sqm is not None else parsed.area_sqm
 
         # 1. Upsert property
         row = self.conn.execute(
@@ -287,13 +293,13 @@ class AuctionDB:
                     item.province,
                     item.city,
                     parsed.district,
-                    parsed.community_name,
+                    effective_community,
                     parsed.normalized_address,
-                    item.title,
+                    effective_address,
                     parsed.property_type,
                     int(parsed.is_partial_share),
                     parsed.ownership_share,
-                    parsed.area_sqm,
+                    effective_area,
                     json.dumps(parsed.risk_tags, ensure_ascii=False),
                     parsed.risk_level,
                     ts,
@@ -301,13 +307,13 @@ class AuctionDB:
                 ),
             )
             property_id = int(cur.lastrowid)
-            area_sqm = parsed.area_sqm
+            area_sqm = effective_area
             property_created = True
         else:
             property_id = int(row["id"])
-            area_sqm = row["area_sqm"] if row["area_sqm"] is not None else parsed.area_sqm
+            area_sqm = row["area_sqm"] if row["area_sqm"] is not None else effective_area
             district = row["district"] or parsed.district
-            community = row["community_name"] or parsed.community_name
+            community = row["community_name"] or effective_community
             prop_type = row["property_type"] if row["property_type"] != "other" else parsed.property_type
             existing_tags = json.loads(row["risk_tags_json"] or "[]")
             merged_tags = list(dict.fromkeys(existing_tags + parsed.risk_tags))

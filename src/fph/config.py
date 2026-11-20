@@ -47,6 +47,11 @@ class RegionConfig:
     category: str = "50025969"
     status_scopes: list[str] = field(default_factory=lambda: ["active", "ended"])
     custom_url: str = ""
+    provider: str = ""
+    jd_province_id: str = ""
+    jd_city_id: str = ""
+    jd_county_id: str = ""
+    jd_category_id: str = ""
 
 
 @dataclass(slots=True)
@@ -129,6 +134,11 @@ def load_config(path: str | Path | None = None) -> AppConfig:
                 category=str(item.get("category", "50025969")),
                 status_scopes=[str(s) for s in item.get("status_scopes", ["active", "ended"])],
                 custom_url=str(item.get("custom_url", "")),
+                provider=str(item.get("provider", "")),
+                jd_province_id=str(item.get("jd_province_id", "")),
+                jd_city_id=str(item.get("jd_city_id", "")),
+                jd_county_id=str(item.get("jd_county_id", "")),
+                jd_category_id=str(item.get("jd_category_id", "")),
             )
         )
 
