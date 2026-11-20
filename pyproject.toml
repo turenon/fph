@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fph"
+version = "0.1.0"
+description = "Regional judicial auction (法拍房) lifecycle data warehouse & bargain finder with pluggable providers (ego-lite / ego-browser)."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "tomli>=2.0.1; python_version < '3.11'",
+]
+
+[project.scripts]
+fph = "fph.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

@@ -1,0 +1,62 @@
+# 法拍房全生命周期分析库配置文件
+# 复制为 config.toml 后按需修改：cp config.example.toml config.toml
+
+[storage]
+# SQLite 分析库路径（相对路径基于当前工作目录，也可填绝对路径）
+db_path = "data/fph.db"
+# 默认导出目录
+export_dir = "exports"
+
+[provider]
+# 当前启用的采集后端：taobao_ego（复用本机 ego(lite) / ego-browser 登录态）
+name = "taobao_ego"
+# ego-browser 可执行命令（默认从 PATH 查找；Windows 如找不到可填完整路径）
+ego_browser_cmd = "ego-browser"
+# ego(lite) 独立 Task Space 名称（后台静默运行，不抢占日常浏览标签页）
+task_space = "fph-auction-collector"
+# 单次脚本超时（秒）
+timeout_seconds = 90
+# 页面导航等待超时（秒）
+page_timeout_seconds = 25
+# 翻页/详情请求之间的随机延时区间（秒），低频防风控
+min_delay_seconds = 3.0
+max_delay_seconds = 7.0
+# 每次同步列表最多抓取页数（按更新时间/默认排序，日常增量 3~5 页足够）
+max_pages_per_query = 5
+# 每次运行最多补抓多少条新标的的详情与公告（避免单次请求过多）
+max_detail_enrich_per_run = 20
+# 每次运行最多回刷多少条已过结拍时间但未终结状态的标的
+max_ended_refresh_per_run = 20
+
+[schedule]
+# 定时常驻模式下的执行间隔（分钟），默认每 6 小时执行一次
+interval_minutes = 360
+# 每次调度附带的随机抖动（分钟），避免固定整点请求
+jitter_minutes = 15
+# 每次定时同步是否自动补抓新标的详情与公告
+auto_enrich_details = true
+# 每次定时同步是否自动回刷已结拍标的最终成交价
+auto_refresh_ended = true
+
+# 默认监控区域：福建省福州市 + 福建省龙岩市（住宅用房 category=50025969）
+# status_scopes:
+#   - "active" : 正在进行 + 即将开始（日常捡漏监控）
+#   - "ended"  : 已结束（持续积累全量成交/流拍行情数据）
+
+[[regions]]
+name = "福州市-住宅"
+province = "福建"
+city = "福州"
+location_code = "350100"
+category = "50025969"
+status_scopes = ["active", "ended"]
+# 如需直接指定淘宝筛选页 URL，可取消注释并粘贴完整链接（不带 page 参数）：
+# custom_url = "https://sf.taobao.com/list/50025969.htm?location_code=350100"
+
+[[regions]]
+name = "龙岩市-住宅"
+province = "福建"
+city = "龙岩"
+location_code = "350800"
+category = "50025969"
+status_scopes = ["active", "ended"]
