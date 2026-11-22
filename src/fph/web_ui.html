@@ -218,6 +218,186 @@
       user-select: none;
     }
     .check-label input { width: 15px; height: 15px; margin: 0; cursor: pointer; }
+    .multi-select { position: relative; }
+    .multi-select-btn {
+      height: 32px;
+      padding: 0 10px;
+      border-radius: 7px;
+      border: 1px solid var(--border-strong);
+      background: var(--surface);
+      color: var(--text);
+      font-size: 13px;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      min-width: 120px;
+      white-space: nowrap;
+    }
+    .multi-select-btn:hover { background: var(--surface-muted); }
+    .multi-select-menu {
+      display: none;
+      position: absolute;
+      top: calc(100% + 4px);
+      left: 0;
+      z-index: 30;
+      min-width: 170px;
+      background: var(--surface);
+      border: 1px solid var(--border-strong);
+      border-radius: 8px;
+      box-shadow: var(--shadow-md);
+      padding: 6px;
+    }
+    .multi-select.open .multi-select-menu { display: block; }
+    .multi-select-opt {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      padding: 5px 8px;
+      border-radius: 6px;
+      font-size: 13px;
+      cursor: pointer;
+      user-select: none;
+    }
+    .multi-select-opt:hover { background: var(--surface-muted); }
+    .multi-select-actions {
+      display: flex;
+      justify-content: space-between;
+      gap: 6px;
+      margin-top: 4px;
+      padding-top: 6px;
+      border-top: 1px solid var(--border);
+    }
+    .multi-select-actions button {
+      border: none;
+      background: none;
+      color: var(--primary);
+      font-size: 12px;
+      cursor: pointer;
+      padding: 2px 4px;
+    }
+    .multi-select-actions button:hover { text-decoration: underline; }
+
+    /* Batch selection & enrich progress */
+    .batch-bar {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 10px 16px;
+      border-bottom: 1px solid var(--border);
+      background: #f8fafc;
+      font-size: 13px;
+    }
+    .batch-bar-left, .batch-bar-right {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 10px;
+    }
+    .enrich-banner {
+      display: none;
+      flex-direction: column;
+      gap: 8px;
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border);
+      background: var(--primary-soft);
+      font-size: 13px;
+    }
+    .enrich-banner.open { display: flex; }
+    .enrich-banner.auth { background: var(--amber-bg); border-bottom-color: #fcd34d; }
+    .enrich-banner.done { background: var(--green-bg); border-bottom-color: #86efac; }
+    .enrich-banner.err { background: var(--red-bg); border-bottom-color: #fca5a5; }
+    .enrich-banner-top {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+    .progress-track {
+      width: 100%;
+      height: 6px;
+      border-radius: 999px;
+      background: rgba(15, 23, 42, 0.1);
+      overflow: hidden;
+    }
+    .progress-fill {
+      height: 100%;
+      border-radius: 999px;
+      background: var(--primary);
+      transition: width 0.25s ease;
+    }
+    .enrich-banner.auth .progress-fill { background: var(--amber); }
+    .enrich-banner.done .progress-fill { background: var(--green); }
+    .enrich-banner.err .progress-fill { background: var(--red); }
+
+    /* Console tab */
+    .console-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+      gap: 16px;
+      margin-bottom: 16px;
+    }
+    .console-card-head {
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      background: var(--surface-muted);
+    }
+    .console-card-head h3 {
+      margin: 0;
+      font-size: 14px;
+      font-weight: 700;
+    }
+    .console-card-body {
+      padding: 14px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .console-row {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: flex-end;
+      gap: 10px;
+    }
+    .console-divider {
+      border-top: 1px solid var(--border);
+      padding-top: 12px;
+    }
+    .console-auth-bar {
+      display: none;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 10px;
+      padding: 10px 16px;
+      background: var(--amber-bg);
+      border-bottom: 1px solid #fcd34d;
+      font-size: 13px;
+    }
+    .console-auth-bar.open { display: flex; }
+    .log-terminal {
+      margin: 0;
+      padding: 14px 16px;
+      background: #0f172a;
+      color: #e2e8f0;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 12px;
+      line-height: 1.55;
+      min-height: 280px;
+      max-height: 480px;
+      overflow: auto;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
 
     /* Table */
     .table-wrap { overflow-x: auto; }
@@ -281,6 +461,12 @@
 
     .price-main { font-weight: 700; color: var(--text); }
     .price-sub { font-size: 11px; color: var(--text-subtle); margin-top: 2px; }
+    .court-sub {
+      max-width: 160px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
 
     /* Progress bar for stats */
     .meter-wrap { display: flex; align-items: center; gap: 8px; }
@@ -437,6 +623,7 @@
       <button class="tab-btn" data-tab="bargains" type="button">捡漏候选</button>
       <button class="tab-btn" data-tab="stats" type="button">区域行情</button>
       <button class="tab-btn" data-tab="logs" type="button">采集日志</button>
+      <button class="tab-btn" data-tab="console" type="button">任务控制台</button>
     </nav>
 
     <!-- Tab 1: All Items -->
@@ -490,15 +677,24 @@
             </select>
           </div>
           <div class="filter-group">
-            <label for="filterStage">阶段</label>
-            <select id="filterStage">
-              <option value="all">全部阶段</option>
-              <option value="一拍">一拍</option>
-              <option value="二拍">二拍</option>
-              <option value="变卖">变卖</option>
-              <option value="重新拍卖">重新拍卖</option>
-              <option value="未知">未知</option>
-            </select>
+            <label for="btnStageMulti">阶段（多选）</label>
+            <div class="multi-select" id="stageMulti">
+              <button class="multi-select-btn" id="btnStageMulti" type="button">
+                <span id="stageMultiText">全部阶段</span>
+                <span style="font-size:10px;color:var(--text-subtle);">▼</span>
+              </button>
+              <div class="multi-select-menu" id="stageMultiMenu">
+                <label class="multi-select-opt"><input type="checkbox" value="一拍" /> 一拍</label>
+                <label class="multi-select-opt"><input type="checkbox" value="二拍" /> 二拍</label>
+                <label class="multi-select-opt"><input type="checkbox" value="变卖" /> 变卖</label>
+                <label class="multi-select-opt"><input type="checkbox" value="重新拍卖" /> 重新拍卖</label>
+                <label class="multi-select-opt"><input type="checkbox" value="未知" /> 未知</label>
+                <div class="multi-select-actions">
+                  <button type="button" id="btnStageExcludeSelloff">排除变卖</button>
+                  <button type="button" id="btnStageClear">全部</button>
+                </div>
+              </div>
+            </div>
           </div>
           <div class="filter-group">
             <label for="filterRisk">风险</label>
@@ -522,15 +718,36 @@
               <option value="last_seen_desc">最近采集优先</option>
             </select>
           </div>
+          <label class="check-label"><input type="checkbox" id="filterExcludeSelloff" /> 排除变卖</label>
           <label class="check-label"><input type="checkbox" id="filterFullShare" /> 仅全产权</label>
           <label class="check-label"><input type="checkbox" id="filterEnriched" /> 仅已抓详情</label>
           <button class="btn" id="btnResetItems" type="button">重置</button>
+        </div>
+
+        <div class="batch-bar" id="batchBar">
+          <div class="batch-bar-left">
+            <span id="batchCountText">已选 <strong>0</strong> 条（单次最多 30 条）</span>
+            <label class="check-label"><input type="checkbox" id="chkForceEnrich" /> 强制重抓已抓详情</label>
+          </div>
+          <div class="batch-bar-right">
+            <button class="btn btn-sm" id="btnClearSelection" type="button" disabled>清空选择</button>
+            <button class="btn btn-sm btn-primary" id="btnBatchEnrich" type="button" disabled>采集选中详情</button>
+          </div>
+        </div>
+
+        <div class="enrich-banner" id="enrichBanner">
+          <div class="enrich-banner-top">
+            <div id="enrichBannerInfo"></div>
+            <div id="enrichBannerActions" style="display:flex;gap:8px;flex-wrap:wrap;"></div>
+          </div>
+          <div class="progress-track"><div class="progress-fill" id="enrichProgressFill" style="width:0%"></div></div>
         </div>
 
         <div class="table-wrap">
           <table>
             <thead>
               <tr>
+                <th style="width:36px;"><input type="checkbox" id="chkSelectAllPage" title="全选本页" /></th>
                 <th>标的物</th>
                 <th>阶段</th>
                 <th>状态</th>
@@ -545,7 +762,7 @@
               </tr>
             </thead>
             <tbody id="itemsBody">
-              <tr><td colspan="11" class="empty-state">加载中...</td></tr>
+              <tr><td colspan="12" class="empty-state">加载中...</td></tr>
             </tbody>
           </table>
         </div>
@@ -603,6 +820,7 @@
             <label for="bStage">阶段</label>
             <select id="bStage">
               <option value="">不限</option>
+              <option value="__exclude_变卖__">排除变卖</option>
               <option value="二拍">二拍</option>
               <option value="变卖">变卖</option>
               <option value="一拍">一拍</option>
@@ -694,6 +912,137 @@
         </div>
       </div>
     </section>
+
+    <!-- Tab 5: Task Console -->
+    <section class="tab-panel" id="tab-console">
+      <div class="console-grid">
+        <div class="card">
+          <div class="console-card-head">
+            <h3>数据采集与补抓（sync / enrich）</h3>
+            <div style="display:flex;gap:6px;flex-wrap:wrap;">
+              <button class="btn btn-sm btn-primary" id="btnQuickSync7d" type="button">更新最近 7 天</button>
+              <button class="btn btn-sm" id="btnQuickSyncActive" type="button">仅刷在拍/预告</button>
+              <button class="btn btn-sm" id="btnQuickSyncFull" type="button">全量增量同步</button>
+            </div>
+          </div>
+          <div class="console-card-body">
+            <div class="console-row">
+              <div class="filter-group">
+                <label for="cRegion">监控区域</label>
+                <select id="cRegion"><option value="">全部区域</option></select>
+              </div>
+              <div class="filter-group">
+                <label for="cPlatform">平台</label>
+                <select id="cPlatform">
+                  <option value="all">全部平台</option>
+                  <option value="taobao">淘宝法拍</option>
+                  <option value="jd">京东法拍</option>
+                </select>
+              </div>
+              <div class="filter-group">
+                <label for="cLookback">历史时间范围</label>
+                <select id="cLookback">
+                  <option value="">配置默认</option>
+                  <option value="7">最近 7 天（只更新近一周）</option>
+                  <option value="30">最近 30 天</option>
+                  <option value="730">最近 2 年 (730 天)</option>
+                  <option value="0">不限制 (0)</option>
+                </select>
+              </div>
+              <div class="filter-group">
+                <label for="cMaxPages">最大页数</label>
+                <input type="number" id="cMaxPages" placeholder="默认" min="1" max="200" style="width:82px;" />
+              </div>
+            </div>
+            <div class="console-row" style="align-items:center;">
+              <label class="check-label"><input type="checkbox" id="cActiveOnly" /> 仅在拍/预告</label>
+              <label class="check-label"><input type="checkbox" id="cNoEnrich" /> 跳过详情补抓</label>
+              <label class="check-label"><input type="checkbox" id="cNoRefresh" /> 跳过结拍回刷</label>
+              <label class="check-label"><input type="checkbox" id="cResetCheckpoint" /> 重置回填断点</label>
+              <button class="btn btn-primary" id="btnConsoleSync" type="button" style="margin-left:auto;">执行同步 (sync)</button>
+            </div>
+            <div class="console-row console-divider">
+              <div class="filter-group">
+                <label for="cEnrichProvider">补抓平台</label>
+                <select id="cEnrichProvider">
+                  <option value="all">全部平台</option>
+                  <option value="taobao">淘宝法拍</option>
+                  <option value="jd">京东法拍</option>
+                </select>
+              </div>
+              <div class="filter-group">
+                <label for="cEnrichLimit">补抓条数</label>
+                <input type="number" id="cEnrichLimit" value="20" min="1" max="200" style="width:82px;" />
+              </div>
+              <div class="filter-group">
+                <label for="cEnrichStatuses">目标状态</label>
+                <select id="cEnrichStatuses">
+                  <option value="">配置默认</option>
+                  <option value="ongoing,upcoming">仅在拍/预告</option>
+                  <option value="sold">仅已成交</option>
+                  <option value="all">全部状态</option>
+                </select>
+              </div>
+              <div class="filter-group">
+                <label for="cEnrichLookback">时间范围</label>
+                <select id="cEnrichLookback">
+                  <option value="">配置默认</option>
+                  <option value="7">最近 7 天</option>
+                  <option value="30">最近 30 天</option>
+                  <option value="730">最近 2 年</option>
+                </select>
+              </div>
+              <button class="btn" id="btnConsoleEnrich" type="button" style="margin-left:auto;">执行补抓 (enrich)</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="console-card-head">
+            <h3>运维诊断与定时调度（doctor / cleanup / schedule）</h3>
+          </div>
+          <div class="console-card-body">
+            <div class="console-row" style="align-items:center;">
+              <button class="btn" id="btnConsoleDoctor" type="button">环境自检 (doctor)</button>
+              <button class="btn" id="btnConsoleCleanupDry" type="button">清理预览 (cleanup --dry-run)</button>
+              <button class="btn" id="btnConsoleCleanupRun" type="button" style="color:var(--red);border-color:#fca5a5;">确认执行清理 (cleanup)</button>
+            </div>
+            <div class="console-row console-divider" style="align-items:flex-end;">
+              <div class="filter-group">
+                <label for="cSchedInterval">定时调度间隔（分钟）</label>
+                <input type="number" id="cSchedInterval" value="360" min="5" max="10080" style="width:110px;" />
+              </div>
+              <label class="check-label" style="padding-bottom:6px;"><input type="checkbox" id="cSchedDelayFirst" /> 延迟首个周期再运行</label>
+              <button class="btn btn-primary" id="btnConsoleSchedule" type="button" style="margin-left:auto;">启动定时采集</button>
+            </div>
+            <div style="font-size:12px;color:var(--text-subtle);">
+              提示：控制台浏览器任务（<code>sync</code> / <code>enrich</code> / <code>schedule</code>）与「房源列表 → 批量采集选中详情」互斥运行，避免抢占 <code>ego(lite)</code> Space。
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="console-card-head">
+          <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+            <h3>实时日志终端</h3>
+            <span class="badge badge-slate" id="consoleStatusBadge">空闲</span>
+            <span class="mono" id="consoleCmdPreview" style="color:var(--text-subtle);"></span>
+          </div>
+          <div style="display:flex;gap:8px;">
+            <button class="btn btn-sm" id="btnConsoleStop" type="button" disabled>停止任务</button>
+            <button class="btn btn-sm" id="btnConsoleClear" type="button">清空显示</button>
+          </div>
+        </div>
+        <div class="console-auth-bar" id="consoleAuthBar">
+          <div>
+            <strong>[需要人机验证]</strong> 请在 <strong>ego(lite)</strong> 切入对应 Space 手动完成滑块/登录验证，完成后点击右侧按钮从断点继续执行。
+          </div>
+          <button class="btn btn-sm btn-primary" id="btnConsoleRetry" type="button">已完成验证，继续执行</button>
+        </div>
+        <pre class="log-terminal" id="consoleLogBox">暂无运行日志，点击上方按钮即可执行命令并实时查看输出...</pre>
+      </div>
+    </section>
   </div>
 
   <!-- Detail Drawer -->
@@ -705,6 +1054,7 @@
           <div id="drawerBadges" class="item-sub"></div>
         </div>
         <div style="display:flex;gap:8px;flex-shrink:0;">
+          <button class="btn btn-sm" id="btnDrawerReenrich" type="button" style="display:none;">重抓详情</button>
           <a class="btn btn-sm btn-primary" id="drawerExternalLink" href="#" target="_blank" rel="noopener noreferrer" style="display:none;">打开原页</a>
           <button class="btn btn-sm" id="btnCloseDrawer" type="button">关闭</button>
         </div>
@@ -753,6 +1103,16 @@
         total: 0,
         activeTab: "items",
         searchTimer: null,
+        selectedIds: new Set(),
+        pageRoundIds: [],
+        enrichPollTimer: null,
+        enrichActive: false,
+        lastEnrichStatus: "idle",
+        drawerRoundId: null,
+        consoleCursor: 0,
+        consolePollTimer: null,
+        lastConsoleStatus: "idle",
+        consoleLogsEmpty: true,
       };
 
       const $ = (id) => document.getElementById(id);
@@ -881,6 +1241,196 @@
         updateDistrictSelect();
       }
 
+      function getSelectedStages() {
+        return Array.from(document.querySelectorAll('#stageMultiMenu input[type="checkbox"]:checked'))
+          .map((cb) => cb.value);
+      }
+
+      function syncStageMultiUI() {
+        const selected = getSelectedStages();
+        const textEl = $("stageMultiText");
+        if (selected.length === 0) {
+          textEl.textContent = $("filterExcludeSelloff").checked ? "已排除变卖" : "全部阶段";
+        } else if (selected.length <= 2) {
+          textEl.textContent = selected.join(", ");
+        } else {
+          textEl.textContent = `已选 ${selected.length} 项`;
+        }
+      }
+
+      async function apiPost(url, payload) {
+        const res = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload || {}),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          throw new Error(data.error || `请求失败 (${res.status})`);
+        }
+        return data;
+      }
+
+      function syncBatchBar() {
+        const count = state.selectedIds.size;
+        const overLimit = count > 30;
+        $("batchCountText").innerHTML = overLimit
+          ? `已选 <strong style="color:var(--red);">${count}</strong> 条（超出单次上限 30 条，请减少勾选）`
+          : `已选 <strong>${count}</strong> 条（单次最多 30 条）`;
+        $("btnClearSelection").disabled = count === 0;
+        $("btnBatchEnrich").disabled = count === 0 || overLimit || state.enrichActive;
+
+        const allOnPageSelected =
+          state.pageRoundIds.length > 0 && state.pageRoundIds.every((id) => state.selectedIds.has(id));
+        $("chkSelectAllPage").checked = allOnPageSelected;
+        $("chkSelectAllPage").indeterminate =
+          !allOnPageSelected && state.pageRoundIds.some((id) => state.selectedIds.has(id));
+      }
+
+      function renderEnrichBanner(job) {
+        const banner = $("enrichBanner");
+        const info = $("enrichBannerInfo");
+        const actions = $("enrichBannerActions");
+        const fill = $("enrichProgressFill");
+
+        if (!job || job.status === "idle") {
+          banner.className = "enrich-banner";
+          state.enrichActive = false;
+          syncBatchBar();
+          return;
+        }
+
+        const total = Math.max(1, Number(job.total || 0));
+        const processed = Number(job.processed || 0);
+        const pct = Math.min(100, Math.round((processed / total) * 100));
+        fill.style.width = `${pct}%`;
+
+        let cls = "enrich-banner open";
+        let statusLabel = "采集中";
+        if (job.status === "auth_required") {
+          cls += " auth";
+          statusLabel = "需要人机验证";
+        } else if (job.status === "completed") {
+          cls += " done";
+          statusLabel = "采集完成";
+        } else if (job.status === "cancelled" || job.status === "error") {
+          cls += " err";
+          statusLabel = job.status === "cancelled" ? "已取消" : "采集异常";
+        }
+        banner.className = cls;
+
+        const statsText = `进度 ${processed}/${job.total}（成功 ${job.succeeded} · 跳过 ${job.skipped} · 失败 ${job.failed}）`;
+        let detailLine = "";
+        if (job.status === "running" && job.current_title) {
+          detailLine = `<div style="font-size:12px;color:var(--text-muted);margin-top:2px;">正在抓取: ${escapeHtml(job.current_title)}</div>`;
+        } else if (job.status === "auth_required") {
+          const authUrl = safeHttpUrl(job.auth_url);
+          const urlPart = authUrl
+            ? ` <a href="${escapeHtml(authUrl)}" target="_blank" rel="noopener noreferrer">查看验证页</a>`
+            : "";
+          detailLine = `<div style="font-size:12px;margin-top:2px;">请在 <strong>ego(lite)</strong> 切入 Space <code>${escapeHtml(job.task_space || "fph-auction-collector")}</code> 完成滑块/登录后，点击右侧「已完成验证，继续采集」。${urlPart}</div>`;
+        } else if (job.errors && job.errors.length) {
+          detailLine = `<div style="font-size:12px;color:var(--red);margin-top:2px;">异常记录: ${escapeHtml(job.errors[0])}</div>`;
+        }
+
+        info.innerHTML = `<div><strong>[${statusLabel}]</strong> ${escapeHtml(statsText)}</div>${detailLine}`;
+
+        const btns = [];
+        if (job.status === "auth_required") {
+          btns.push('<button class="btn btn-sm btn-primary" id="btnResumeEnrich" type="button">已完成验证，继续采集</button>');
+          btns.push('<button class="btn btn-sm" id="btnCancelEnrich" type="button">终止任务</button>');
+        } else if (job.status === "running") {
+          btns.push('<button class="btn btn-sm" id="btnCancelEnrich" type="button">终止任务</button>');
+        } else {
+          btns.push('<button class="btn btn-sm" id="btnDismissEnrich" type="button">关闭提示</button>');
+        }
+        actions.innerHTML = btns.join("");
+
+        const resumeBtn = $("btnResumeEnrich");
+        if (resumeBtn) {
+          resumeBtn.addEventListener("click", async () => {
+            resumeBtn.disabled = true;
+            try {
+              const next = await apiPost("/api/enrich/resume", {});
+              renderEnrichBanner(next);
+              scheduleEnrichPoll();
+            } catch (err) {
+              showError(err.message);
+            }
+          });
+        }
+        const cancelBtn = $("btnCancelEnrich");
+        if (cancelBtn) {
+          cancelBtn.addEventListener("click", async () => {
+            cancelBtn.disabled = true;
+            try {
+              const next = await apiPost("/api/enrich/cancel", {});
+              renderEnrichBanner(next);
+            } catch (err) {
+              showError(err.message);
+            }
+          });
+        }
+        const dismissBtn = $("btnDismissEnrich");
+        if (dismissBtn) {
+          dismissBtn.addEventListener("click", () => {
+            banner.className = "enrich-banner";
+          });
+        }
+
+        const isActive = job.status === "running" || job.status === "auth_required";
+        state.enrichActive = isActive;
+        syncBatchBar();
+      }
+
+      function scheduleEnrichPoll() {
+        if (state.enrichPollTimer) {
+          clearTimeout(state.enrichPollTimer);
+          state.enrichPollTimer = null;
+        }
+        state.enrichPollTimer = setTimeout(pollEnrichStatus, 1500);
+      }
+
+      async function pollEnrichStatus() {
+        try {
+          const job = await apiGet("/api/enrich/status");
+          const prevStatus = state.lastEnrichStatus;
+          state.lastEnrichStatus = job.status;
+          renderEnrichBanner(job);
+
+          if (job.status === "running" || job.status === "auth_required") {
+            scheduleEnrichPoll();
+          } else if (
+            (prevStatus === "running" || prevStatus === "auth_required") &&
+            ["completed", "cancelled", "error"].includes(job.status)
+          ) {
+            state.selectedIds.clear();
+            await Promise.all([loadOverview(), loadItems()]);
+            if (state.drawerRoundId && $("detailBackdrop").classList.contains("open")) {
+              openDetail(state.drawerRoundId);
+            }
+          }
+        } catch (err) {
+          showError(err.message);
+        }
+      }
+
+      async function startBatchEnrich(roundIds, force) {
+        try {
+          const job = await apiPost("/api/enrich", { round_ids: roundIds, force: Boolean(force) });
+          state.lastEnrichStatus = job.status;
+          renderEnrichBanner(job);
+          if (job.status === "running" || job.status === "auth_required") {
+            scheduleEnrichPoll();
+          } else if (job.status === "completed") {
+            state.selectedIds.clear();
+            await Promise.all([loadOverview(), loadItems()]);
+          }
+        } catch (err) {
+          showError(err.message);
+        }
+      }
+
       function buildItemsQuery() {
         const qs = new URLSearchParams();
         const q = $("filterQ").value.trim();
@@ -889,7 +1439,7 @@
         const district = $("filterDistrict").value;
         const ptype = $("filterType").value;
         const status = $("filterStatus").value;
-        const stage = $("filterStage").value;
+        const stages = getSelectedStages();
         const risk = $("filterRisk").value;
         const sort = $("filterSort").value;
         if (q) qs.set("q", q);
@@ -898,7 +1448,8 @@
         if (district) qs.set("district", district);
         if (ptype !== "all") qs.set("property_type", ptype);
         if (status !== "all") qs.set("status", status);
-        if (stage !== "all") qs.set("stage", stage);
+        if (stages.length > 0) qs.set("stage", stages.join(","));
+        if ($("filterExcludeSelloff").checked) qs.set("exclude_stage", "变卖");
         if (risk !== "all") qs.set("risk_level", risk);
         if ($("filterFullShare").checked) qs.set("only_full_share", "1");
         if ($("filterEnriched").checked) qs.set("only_enriched", "1");
@@ -921,12 +1472,16 @@
           $("btnNextPage").disabled = state.page >= totalPages;
 
           const items = data.items || [];
+          state.pageRoundIds = items.map((it) => Number(it.round_id));
           if (!items.length) {
-            body.innerHTML = '<tr><td colspan="11" class="empty-state"><strong>暂无符合条件的标的</strong>尝试放宽筛选条件，或运行 <code>fph sync</code> 采集更多数据。</td></tr>';
+            body.innerHTML = '<tr><td colspan="12" class="empty-state"><strong>暂无符合条件的标的</strong>尝试放宽筛选条件，或运行 <code>fph sync</code> 采集更多数据。</td></tr>';
+            syncBatchBar();
             return;
           }
 
           body.innerHTML = items.map((it) => {
+            const rid = Number(it.round_id);
+            const checkedAttr = state.selectedIds.has(rid) ? "checked" : "";
             const refPrice = it.current_price !== null ? it.current_price : it.initial_price;
             const loc = [it.city, it.district, it.community_name].filter(Boolean).join(" · ");
             const url = safeHttpUrl(it.url);
@@ -945,6 +1500,7 @@
 
             return `
               <tr class="clickable-row" data-round-id="${it.round_id}">
+                <td onclick="event.stopPropagation()"><input type="checkbox" class="row-select" data-round-id="${it.round_id}" ${checkedAttr} /></td>
                 <td class="title-cell">
                   <div class="item-title">${escapeHtml(it.title)}</div>
                   <div class="item-sub">
@@ -975,7 +1531,7 @@
                 </td>
                 <td class="num">
                   <div>${escapeHtml(it.end_time || "-")}</div>
-                  <div class="price-sub">${escapeHtml(it.court_name || "")}</div>
+                  <div class="price-sub court-sub" title="${escapeHtml(it.court_name || "")}">${escapeHtml(it.court_name || "")}</div>
                 </td>
                 <td>${badgeRisk(it.risk_level)}</td>
                 <td>
@@ -987,19 +1543,25 @@
               </tr>
             `;
           }).join("");
+          syncBatchBar();
         } catch (err) {
           showError(err.message);
-          body.innerHTML = `<tr><td colspan="11" class="empty-state">${escapeHtml(err.message)}</td></tr>`;
+          state.pageRoundIds = [];
+          body.innerHTML = `<tr><td colspan="12" class="empty-state">${escapeHtml(err.message)}</td></tr>`;
+          syncBatchBar();
         }
       }
 
       async function openDetail(roundId) {
+        state.drawerRoundId = roundId;
         const backdrop = $("detailBackdrop");
         const body = $("drawerBody");
         const ext = $("drawerExternalLink");
+        const reenrichBtn = $("btnDrawerReenrich");
         $("drawerTitle").textContent = "正在加载标的详情...";
         $("drawerBadges").innerHTML = "";
         ext.style.display = "none";
+        reenrichBtn.style.display = "inline-flex";
         body.innerHTML = '<div class="empty-state">加载中...</div>';
         backdrop.classList.add("open");
         backdrop.setAttribute("aria-hidden", "false");
@@ -1123,7 +1685,12 @@
         if ($("bMaxTotal").value) qs.set("max_total", $("bMaxTotal").value);
         if ($("bMinArea").value) qs.set("min_area", $("bMinArea").value);
         qs.set("max_risk", $("bMaxRisk").value);
-        if ($("bStage").value) qs.set("stage", $("bStage").value);
+        const bStageVal = $("bStage").value;
+        if (bStageVal === "__exclude_变卖__") {
+          qs.set("exclude_stage", "变卖");
+        } else if (bStageVal) {
+          qs.set("stage", bStageVal);
+        }
         qs.set("limit", "100");
 
         try {
@@ -1260,6 +1827,109 @@
         if (tabName === "bargains") loadBargains();
         if (tabName === "stats") loadStats();
         if (tabName === "logs") loadLogs();
+        if (tabName === "console") loadConsoleOptions();
+      }
+
+      async function loadConsoleOptions() {
+        try {
+          const data = await apiGet("/api/console/options");
+          const sel = $("cRegion");
+          const prev = sel.value;
+          const regions = data.regions || [];
+          sel.innerHTML = '<option value="">全部区域</option>' + regions
+            .map((r) => `<option value="${escapeHtml(r.name)}">${escapeHtml(r.name)} (${escapeHtml(r.provider)})</option>`)
+            .join("");
+          if (prev) sel.value = prev;
+          const d = data.defaults || {};
+          if (d.schedule_interval_minutes && !$("cSchedInterval").dataset.touched) {
+            $("cSchedInterval").value = String(d.schedule_interval_minutes);
+          }
+          if (d.max_detail_enrich_per_run && !$("cEnrichLimit").dataset.touched) {
+            $("cEnrichLimit").value = String(d.max_detail_enrich_per_run);
+          }
+        } catch (err) {
+          showError(err.message);
+        }
+      }
+
+      function renderConsoleStatus(data) {
+        const badge = $("consoleStatusBadge");
+        const preview = $("consoleCmdPreview");
+        const authBar = $("consoleAuthBar");
+        const stopBtn = $("btnConsoleStop");
+        const logBox = $("consoleLogBox");
+
+        const statusMap = {
+          idle: ["空闲", "badge-slate"],
+          running: ["运行中", "badge-blue"],
+          auth_required: ["需要验证", "badge-amber"],
+          succeeded: ["已完成", "badge-green"],
+          failed: ["失败", "badge-red"],
+          stopped: ["已停止", "badge-amber"],
+        };
+        const [label, cls] = statusMap[data.status] || [data.status || "未知", "badge-slate"];
+        badge.className = `badge ${cls}`;
+        badge.textContent = label;
+        preview.textContent = data.command_preview || "";
+        stopBtn.disabled = data.status !== "running";
+        authBar.classList.toggle("open", data.status === "auth_required");
+
+        const lines = data.lines || [];
+        if (lines.length > 0) {
+          const chunk = lines.map((l) => l.text).join("\n");
+          if (state.consoleLogsEmpty) {
+            logBox.textContent = chunk;
+            state.consoleLogsEmpty = false;
+          } else {
+            logBox.textContent += "\n" + chunk;
+          }
+          logBox.scrollTop = logBox.scrollHeight;
+        }
+        if (typeof data.next_cursor === "number") {
+          state.consoleCursor = data.next_cursor;
+        }
+      }
+
+      function scheduleConsolePoll() {
+        if (state.consolePollTimer) {
+          clearTimeout(state.consolePollTimer);
+          state.consolePollTimer = null;
+        }
+        state.consolePollTimer = setTimeout(pollConsoleStatus, 1200);
+      }
+
+      async function pollConsoleStatus() {
+        try {
+          const data = await apiGet(`/api/console/status?since=${state.consoleCursor}`);
+          const prevStatus = state.lastConsoleStatus;
+          state.lastConsoleStatus = data.status;
+          renderConsoleStatus(data);
+
+          if (data.status === "running") {
+            scheduleConsolePoll();
+          } else if (prevStatus === "running" && data.status !== "running") {
+            await Promise.all([loadOverview(), loadItems(), loadLogs()]);
+          }
+        } catch (err) {
+          showError(err.message);
+        }
+      }
+
+      async function runConsoleAction(action, params) {
+        try {
+          showError("");
+          state.consoleCursor = 0;
+          state.consoleLogsEmpty = true;
+          $("consoleLogBox").textContent = "正在启动命令...";
+          const data = await apiPost("/api/console/run", { action, params: params || {} });
+          state.lastConsoleStatus = data.status;
+          renderConsoleStatus(data);
+          if (data.status === "running") {
+            scheduleConsolePoll();
+          }
+        } catch (err) {
+          showError(err.message);
+        }
       }
 
       async function refreshAll() {
@@ -1300,13 +1970,67 @@
         loadItems();
       });
 
-      ["filterPlatform", "filterDistrict", "filterType", "filterStatus", "filterStage", "filterRisk", "filterSort", "filterFullShare", "filterEnriched"]
+      ["filterPlatform", "filterDistrict", "filterType", "filterStatus", "filterRisk", "filterSort", "filterFullShare", "filterEnriched"]
         .forEach((id) => {
           $(id).addEventListener("change", () => {
             state.page = 1;
             loadItems();
           });
         });
+
+      $("filterExcludeSelloff").addEventListener("change", () => {
+        if ($("filterExcludeSelloff").checked) {
+          const selloffCb = document.querySelector('#stageMultiMenu input[value="变卖"]');
+          if (selloffCb) selloffCb.checked = false;
+        }
+        syncStageMultiUI();
+        state.page = 1;
+        loadItems();
+      });
+
+      $("btnStageMulti").addEventListener("click", (e) => {
+        e.stopPropagation();
+        $("stageMulti").classList.toggle("open");
+      });
+
+      document.querySelectorAll('#stageMultiMenu input[type="checkbox"]').forEach((cb) => {
+        cb.addEventListener("change", () => {
+          if (cb.value === "变卖" && cb.checked) {
+            $("filterExcludeSelloff").checked = false;
+          }
+          syncStageMultiUI();
+          state.page = 1;
+          loadItems();
+        });
+      });
+
+      $("btnStageExcludeSelloff").addEventListener("click", () => {
+        document.querySelectorAll('#stageMultiMenu input[type="checkbox"]').forEach((cb) => {
+          cb.checked = cb.value !== "变卖";
+        });
+        $("filterExcludeSelloff").checked = true;
+        syncStageMultiUI();
+        $("stageMulti").classList.remove("open");
+        state.page = 1;
+        loadItems();
+      });
+
+      $("btnStageClear").addEventListener("click", () => {
+        document.querySelectorAll('#stageMultiMenu input[type="checkbox"]').forEach((cb) => {
+          cb.checked = false;
+        });
+        $("filterExcludeSelloff").checked = false;
+        syncStageMultiUI();
+        $("stageMulti").classList.remove("open");
+        state.page = 1;
+        loadItems();
+      });
+
+      document.addEventListener("click", (e) => {
+        if (!e.target.closest("#stageMulti")) {
+          $("stageMulti").classList.remove("open");
+        }
+      });
 
       $("pageSizeSelect").addEventListener("change", () => {
         state.pageSize = parseInt($("pageSizeSelect").value, 10) || 20;
@@ -1336,7 +2060,11 @@
         $("filterDistrict").value = "";
         $("filterType").value = "all";
         $("filterStatus").value = "all";
-        $("filterStage").value = "all";
+        document.querySelectorAll('#stageMultiMenu input[type="checkbox"]').forEach((cb) => {
+          cb.checked = false;
+        });
+        $("filterExcludeSelloff").checked = false;
+        syncStageMultiUI();
         $("filterRisk").value = "all";
         $("filterSort").value = "end_time_desc";
         $("filterFullShare").checked = false;
@@ -1345,7 +2073,48 @@
         loadItems();
       });
 
+      $("itemsBody").addEventListener("change", (e) => {
+        const cb = e.target.closest(".row-select");
+        if (!cb) return;
+        const rid = Number(cb.dataset.roundId);
+        if (cb.checked) state.selectedIds.add(rid);
+        else state.selectedIds.delete(rid);
+        syncBatchBar();
+      });
+
+      $("chkSelectAllPage").addEventListener("change", () => {
+        const checked = $("chkSelectAllPage").checked;
+        state.pageRoundIds.forEach((rid) => {
+          if (checked) state.selectedIds.add(rid);
+          else state.selectedIds.delete(rid);
+        });
+        document.querySelectorAll("#itemsBody .row-select").forEach((cb) => {
+          cb.checked = checked;
+        });
+        syncBatchBar();
+      });
+
+      $("btnClearSelection").addEventListener("click", () => {
+        state.selectedIds.clear();
+        document.querySelectorAll("#itemsBody .row-select").forEach((cb) => {
+          cb.checked = false;
+        });
+        syncBatchBar();
+      });
+
+      $("btnBatchEnrich").addEventListener("click", () => {
+        const ids = Array.from(state.selectedIds);
+        if (!ids.length) return;
+        startBatchEnrich(ids, $("chkForceEnrich").checked);
+      });
+
+      $("btnDrawerReenrich").addEventListener("click", () => {
+        if (!state.drawerRoundId) return;
+        startBatchEnrich([state.drawerRoundId], true);
+      });
+
       $("itemsBody").addEventListener("click", (e) => {
+        if (e.target.closest(".row-select")) return;
         const btn = e.target.closest(".btn-detail");
         const row = e.target.closest("tr.clickable-row");
         const target = btn || row;
@@ -1369,8 +2138,115 @@
         $(id).addEventListener("change", loadStats);
       });
 
+      $("cSchedInterval").addEventListener("input", () => {
+        $("cSchedInterval").dataset.touched = "1";
+      });
+      $("cEnrichLimit").addEventListener("input", () => {
+        $("cEnrichLimit").dataset.touched = "1";
+      });
+
+      $("btnQuickSync7d").addEventListener("click", () => {
+        $("cLookback").value = "7";
+        $("cActiveOnly").checked = false;
+        $("cResetCheckpoint").checked = false;
+        runConsoleAction("sync", {
+          region: $("cRegion").value,
+          provider: $("cPlatform").value,
+          lookback_days: 7,
+          max_pages: $("cMaxPages").value ? Number($("cMaxPages").value) : null,
+        });
+      });
+
+      $("btnQuickSyncActive").addEventListener("click", () => {
+        $("cActiveOnly").checked = true;
+        runConsoleAction("sync", {
+          region: $("cRegion").value,
+          provider: $("cPlatform").value,
+          active_only: true,
+          max_pages: $("cMaxPages").value ? Number($("cMaxPages").value) : null,
+        });
+      });
+
+      $("btnQuickSyncFull").addEventListener("click", () => {
+        $("cActiveOnly").checked = false;
+        $("cLookback").value = "";
+        runConsoleAction("sync", {
+          region: $("cRegion").value,
+          provider: $("cPlatform").value,
+        });
+      });
+
+      $("btnConsoleSync").addEventListener("click", () => {
+        runConsoleAction("sync", {
+          region: $("cRegion").value,
+          provider: $("cPlatform").value,
+          lookback_days: $("cLookback").value !== "" ? Number($("cLookback").value) : null,
+          max_pages: $("cMaxPages").value ? Number($("cMaxPages").value) : null,
+          active_only: $("cActiveOnly").checked,
+          no_enrich: $("cNoEnrich").checked,
+          no_refresh_ended: $("cNoRefresh").checked,
+          reset_checkpoint: $("cResetCheckpoint").checked,
+        });
+      });
+
+      $("btnConsoleEnrich").addEventListener("click", () => {
+        runConsoleAction("enrich", {
+          provider: $("cEnrichProvider").value,
+          limit: $("cEnrichLimit").value ? Number($("cEnrichLimit").value) : 20,
+          statuses: $("cEnrichStatuses").value,
+          lookback_days: $("cEnrichLookback").value !== "" ? Number($("cEnrichLookback").value) : null,
+        });
+      });
+
+      $("btnConsoleDoctor").addEventListener("click", () => runConsoleAction("doctor", {}));
+      $("btnConsoleCleanupDry").addEventListener("click", () => runConsoleAction("cleanup", { dry_run: true }));
+      $("btnConsoleCleanupRun").addEventListener("click", () => {
+        if (!window.confirm("确认执行历史数据清理（将永久删除超期与非住宅轮次）？建议先执行「清理预览」。")) {
+          return;
+        }
+        runConsoleAction("cleanup", { dry_run: false });
+      });
+
+      $("btnConsoleSchedule").addEventListener("click", () => {
+        runConsoleAction("schedule", {
+          interval: $("cSchedInterval").value ? Number($("cSchedInterval").value) : 360,
+          delay_first: $("cSchedDelayFirst").checked,
+        });
+      });
+
+      $("btnConsoleStop").addEventListener("click", async () => {
+        try {
+          const data = await apiPost("/api/console/stop", {});
+          renderConsoleStatus(data);
+        } catch (err) {
+          showError(err.message);
+        }
+      });
+
+      $("btnConsoleRetry").addEventListener("click", async () => {
+        try {
+          state.consoleCursor = 0;
+          state.consoleLogsEmpty = true;
+          const data = await apiPost("/api/console/retry", {});
+          state.lastConsoleStatus = data.status;
+          renderConsoleStatus(data);
+          if (data.status === "running") {
+            scheduleConsolePoll();
+          }
+        } catch (err) {
+          showError(err.message);
+        }
+      });
+
+      $("btnConsoleClear").addEventListener("click", () => {
+        $("consoleLogBox").textContent = "日志显示已清空。";
+        state.consoleLogsEmpty = true;
+      });
+
       // Boot
       refreshAll();
+      pollEnrichStatus();
+      pollConsoleStatus();
     })();
   </script>
 </body>

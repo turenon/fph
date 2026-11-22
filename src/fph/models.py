@@ -28,6 +28,7 @@ class RawAuctionItem:
     end_time: str | None = None  # ISO8601 local time string YYYY-MM-DD HH:MM:SS
     court_name: str = ""
     category_hint: str = ""
+    purpose_hint: str = ""
     raw_payload: dict[str, Any] = field(default_factory=dict)
     address: str = ""
     community_name: str = ""
@@ -42,6 +43,7 @@ class RawAuctionDetail:
     item_id: str
     url: str
     title: str = ""
+    stage: str = ""
     status: str = ""
     current_price: float | None = None
     initial_price: float | None = None
@@ -84,6 +86,9 @@ class SyncSummary:
     status: str  # success / auth_required / error
     pages_fetched: int = 0
     items_seen: int = 0
+    items_filtered: int = 0
+    items_skipped_old: int = 0
+    items_skipped_existing: int = 0
     properties_created: int = 0
     rounds_upserted: int = 0
     details_enriched: int = 0

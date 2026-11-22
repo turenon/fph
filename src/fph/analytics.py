@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from fph.db import AuctionDB
+from fph.db import AuctionDB, escape_like
 
 
 def get_market_summary(
@@ -32,8 +32,8 @@ def get_market_summary(
     where_clauses = ["property_type = 'residential'", "is_partial_share = 0"]
     params: list[Any] = []
     if city:
-        where_clauses.append("city LIKE ?")
-        params.append(f"%{city.replace('市', '')}%")
+        where_clauses.append("city LIKE ? ESCAPE '\\'")
+        params.append(f"%{escape_like(city.replace('市', ''))}%")
 
     sql = f"""
     SELECT
@@ -79,6 +79,7 @@ def find_bargain_candidates(
     min_area: float | None = None,
     max_risk_level: str = "medium",
     stage: str | None = None,
+    exclude_stage: str | None = None,
     limit: int = 30,
 ) -> list[dict[str, Any]]:
     """Find active residential full-ownership bargain candidates sorted by attractiveness."""
@@ -95,11 +96,11 @@ def find_bargain_candidates(
     params: list[Any] = list(allowed_risks) + [max_discount]
 
     if city:
-        where.append("city LIKE ?")
-        params.append(f"%{city.replace('市', '')}%")
+        where.append("city LIKE ? ESCAPE '\\'")
+        params.append(f"%{escape_like(city.replace('市', ''))}%")
     if district:
-        where.append("district LIKE ?")
-        params.append(f"%{district}%")
+        where.append("district LIKE ? ESCAPE '\\'")
+        params.append(f"%{escape_like(district)}%")
     if max_total_wan is not None:
         where.append("COALESCE(current_price, initial_price) <= ?")
         params.append(max_total_wan * 10_000)
@@ -107,8 +108,20 @@ def find_bargain_candidates(
         where.append("area_sqm >= ?")
         params.append(min_area)
     if stage:
-        where.append("stage = ?")
-        params.append(stage)
+        stage_vals = [s.strip() for s in stage.split(",") if s.strip()]
+        if len(stage_vals) == 1:
+            where.append("stage = ?")
+            params.append(stage_vals[0])
+        elif stage_vals:
+            placeholders = ",".join("?" for _ in stage_vals)
+            where.append(f"stage IN ({placeholders})")
+            params.extend(stage_vals)
+    if exclude_stage:
+        ex_vals = [s.strip() for s in exclude_stage.split(",") if s.strip()]
+        if ex_vals:
+            placeholders = ",".join("?" for _ in ex_vals)
+            where.append(f"stage NOT IN ({placeholders})")
+            params.extend(ex_vals)
 
     sql = f"""
     SELECT
@@ -170,8 +183,8 @@ def export_dataset(
     where_sql = ""
     params: list[Any] = []
     if city:
-        where_sql = "WHERE city LIKE ?"
-        params.append(f"%{city.replace('市', '')}%")
+        where_sql = "WHERE city LIKE ? ESCAPE '\\'"
+        params.append(f"%{escape_like(city.replace('市', ''))}%")
 
     sql = f"SELECT * FROM {view_map[dataset]} {where_sql} ORDER BY COALESCE(end_time, last_seen_at) DESC"
     rows = [dict(r) for r in db.conn.execute(sql, params).fetchall()]

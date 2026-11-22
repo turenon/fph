@@ -3,10 +3,13 @@ from __future__ import annotations
 import unittest
 
 from fph.normalizer import (
+    ACTIVE_STATUSES,
+    TERMINAL_STATUSES,
     classify_property_type,
     extract_area_sqm,
     extract_district,
     normalize_datetime,
+    normalize_status,
     parse_price_yuan,
     parse_property_info,
 )
@@ -53,6 +56,105 @@ class NormalizerTest(unittest.TestCase):
             classify_property_type("龙岩市永定区工业园厂房及仓库", category_hint="50025969"),
             "industrial",
         )
+        # Real-world Fuzhou edge cases
+        self.assertEqual(
+            classify_property_type(
+                "福州市台江区茶亭街道八一七中路与工业路北侧交叉处君临盛世茶亭地块九2#楼3205单元",
+                category_hint="12728",
+            ),
+            "residential",
+        )
+        self.assertEqual(
+            classify_property_type(
+                "仓山区盖山镇竹榄路以西清逸华庭11#楼1层11商业服务网点（兼容餐饮）",
+                category_hint="12728",
+            ),
+            "commercial",
+        )
+        self.assertEqual(
+            classify_property_type(
+                "福州市马尾区亭江镇信通观澜商务中心30#楼1层01复式办公、05复式办公的房产",
+                category_hint="12728",
+            ),
+            "commercial",
+        )
+        self.assertEqual(
+            classify_property_type(
+                "闽清县梅城镇解放大街（阳光城）5号楼自然层五层商业",
+                category_hint="50025969",
+            ),
+            "commercial",
+        )
+        self.assertEqual(
+            classify_property_type(
+                "位于福州市鼓楼区武夷中心第十二层西侧办公用房及地下层40车位",
+                category_hint="50025969",
+            ),
+            "commercial",
+        )
+        self.assertEqual(
+            classify_property_type(
+                "连江县凤城镇文山南路469号凤山商住楼1#-3#3号店、4号",
+                category_hint="50025969",
+            ),
+            "commercial",
+        )
+        self.assertEqual(
+            classify_property_type("钟馗摆件", category_hint="50025969"),
+            "other",
+        )
+        self.assertEqual(
+            classify_property_type("十二生肖把玩", category_hint="50025969"),
+            "other",
+        )
+        self.assertEqual(
+            classify_property_type("存放于罗源雄丰纸业有限公司厂房内的12070件白板纸", category_hint="50025969"),
+            "other",
+        )
+        self.assertEqual(
+            classify_property_type(
+                "福州市鼓楼区五凤街道西二环路158号金泉公寓12#楼102单元、1层13附属间",
+                category_hint="12728",
+            ),
+            "residential",
+        )
+        self.assertEqual(
+            classify_property_type(
+                "福州市晋安区鼓山镇远东路230号远洋农贸市场商住楼5#楼703单元",
+                category_hint="12728",
+            ),
+            "residential",
+        )
+        self.assertEqual(
+            classify_property_type(
+                "福州市鼓楼区东街街道横锦巷25号3座501单元及C4#车库",
+                category_hint="12728",
+            ),
+            "residential",
+        )
+        self.assertEqual(
+            classify_property_type(
+                "福州市仓山区金山街道金桔路826号金山湾（公园道",
+                category_hint="50025969",
+            ),
+            "residential",
+        )
+        self.assertEqual(
+            classify_property_type(
+                "福州市某大楼房产",
+                category_hint="12728",
+                purpose_hint="商业",
+            ),
+            "commercial",
+        )
+        self.assertEqual(
+            classify_property_type(
+                "福州市鼓楼区某大楼12层房产",
+                detail_text="标的物规划用途：办公",
+                category_hint="50025969",
+            ),
+            "commercial",
+        )
 
     def test_area_and_risk_extraction_from_notice(self) -> None:
         notice = (
@@ -85,6 +187,20 @@ class NormalizerTest(unittest.TestCase):
         self.assertEqual(parse_price_yuan("524,528元"), 524_528.0)
         self.assertEqual(normalize_datetime("11月19日18:00", reference_year=2026), "2026-11-19 18:00:00")
         self.assertTrue(normalize_datetime(1763546400000).startswith("2025-11-"))
+
+    def test_status_constants_and_revocation_normalization(self) -> None:
+        self.assertEqual(TERMINAL_STATUSES, ("sold", "failed", "withdrawn", "suspended"))
+        self.assertEqual(ACTIVE_STATUSES, ("ongoing", "upcoming"))
+        for raw in ("revocation", "REVOCATION", "revoked", "cancel", "cancelled", "撤拍", "已撤拍", "拍卖撤拍"):
+            self.assertEqual(normalize_status(raw), "withdrawn", msg=f"failed for {raw!r}")
+        self.assertEqual(normalize_status("doing"), "ongoing")
+        self.assertEqual(normalize_status("todo"), "upcoming")
+        self.assertEqual(normalize_status("done"), "sold")
+        self.assertEqual(normalize_status("failure"), "failed")
+        self.assertEqual(normalize_status("break"), "suspended")
+        self.assertEqual(normalize_status("ended", bid_count=2), "sold")
+        self.assertEqual(normalize_status("ended", bid_count=0), "failed")
+        self.assertEqual(normalize_status("ended"), "ended")
 
 
 if __name__ == "__main__":

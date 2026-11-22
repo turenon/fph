@@ -23,10 +23,30 @@ min_delay_seconds = 3.0
 max_delay_seconds = 7.0
 # 每次同步列表最多抓取页数（按更新时间/默认排序，日常增量 3~5 页足够）
 max_pages_per_query = 5
+# 首次历史回填阶段单次最多翻页数（未完成近 2 年全量回填前自动放大，完成后自动切回 max_pages_per_query）
+backfill_max_pages = 50
+# 遇到滑块/登录验证时弹窗等待人工处理的最大秒数（默认 900 秒即 15 分钟；设为 0 则立即保存断点退出）
+auth_wait_timeout_seconds = 900
 # 每次运行最多补抓多少条新标的的详情与公告（避免单次请求过多）
 max_detail_enrich_per_run = 20
 # 每次运行最多回刷多少条已过结拍时间但未终结状态的标的
 max_ended_refresh_per_run = 20
+# 仅采集指定的物业类型（可选：residential / commercial / parking / industrial / land / other）
+# 设为 ["residential"] 表示只采集住宅；设为 [] 表示不限制、全部采集
+# 也可在单个 [[regions]] 下单独设置 allowed_property_types 覆盖全局规则
+allowed_property_types = ["residential"]
+# 仅采集最近 N 天的历史已结拍数据（默认 730 天即 2 年；0 表示不限制；在拍/预告不受此限）
+lookback_days = 730
+# 自动补抓详情/公告的目标状态（默认仅补抓在拍与预告，避免历史结拍标的触发大量详情请求；设为 [] 表示不限）
+enrich_statuses = ["ongoing", "upcoming"]
+# 已结束列表整页均已入库且为终态（或超期）时提前停止翻页，减少重复请求
+stop_on_known_ended_page = true
+# 详情补抓与结拍回刷的最大失败重试次数与冷却时间（小时），防死循环请求
+max_detail_attempts = 3
+max_refresh_attempts = 3
+retry_cooldown_hours = 12
+# 结拍回刷仅追踪结拍时间在近 N 天内且尚未进入终态的标的
+ended_refresh_window_days = 30
 
 [schedule]
 # 定时常驻模式下的执行间隔（分钟），默认每 6 小时执行一次

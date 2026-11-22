@@ -8,6 +8,18 @@ from fph.models import ParsedPropertyInfo
 
 CN_TZ = timezone(timedelta(hours=8))
 
+VALID_PROPERTY_TYPES: tuple[str, ...] = (
+    "residential",
+    "commercial",
+    "parking",
+    "industrial",
+    "land",
+    "other",
+)
+
+TERMINAL_STATUSES: tuple[str, ...] = ("sold", "failed", "withdrawn", "suspended")
+ACTIVE_STATUSES: tuple[str, ...] = ("ongoing", "upcoming")
+
 CITY_DISTRICTS: dict[str, tuple[str, ...]] = {
     "福州": (
         "鼓楼区",
@@ -161,7 +173,21 @@ def normalize_status(status_hint: str = "", bid_count: int | None = None) -> str
         return "sold"
     if s in {"failed", "failure", "流拍", "已流拍", "无人出价", "流标"}:
         return "failed"
-    if s in {"withdrawn", "revoke", "撤回", "已撤回", "撤销", "已下架", "下架"}:
+    if s in {
+        "withdrawn",
+        "revoke",
+        "revocation",
+        "revoked",
+        "cancel",
+        "cancelled",
+        "撤回",
+        "已撤回",
+        "撤销",
+        "撤拍",
+        "已撤拍",
+        "已下架",
+        "下架",
+    }:
         return "withdrawn"
     if s in {"suspended", "break", "中止", "已中止", "暂缓", "已暂缓", "暂停", "已暂停"}:
         return "suspended"
@@ -173,7 +199,7 @@ def normalize_status(status_hint: str = "", bid_count: int | None = None) -> str
         return "sold"
     if "流拍" in s or "流标" in s:
         return "failed"
-    if "撤回" in s or "撤销" in s or "下架" in s:
+    if "撤回" in s or "撤销" in s or "撤拍" in s or "下架" in s:
         return "withdrawn"
     if "中止" in s or "暂缓" in s or "暂停" in s:
         return "suspended"
@@ -203,29 +229,86 @@ def extract_district(text: str, city: str = "", explicit_district: str = "") -> 
     return ""
 
 
-def classify_property_type(title: str, detail_text: str = "", category_hint: str = "") -> str:
+def classify_property_type(
+    title: str,
+    detail_text: str = "",
+    category_hint: str = "",
+    purpose_hint: str = "",
+) -> str:
     """Classify asset type accurately so non-residential items don't pollute residential stats."""
-    t = title or ""
+    t = (title or "").strip()
+    p = (purpose_hint or "").strip()
     combined = f"{t} {detail_text[:600]}"
 
-    # Pure parking / storage (exclude residential unit that merely includes an accessory parking spot)
-    has_residential_unit = bool(re.search(r"(\d+室|\d+单元|\d+户|住宅|别墅|公寓|商品房|复式|跃层)", t))
-    if not has_residential_unit and re.search(r"(车位|车库|泊位|储藏室|杂物间|地下室)", t):
-        return "parking"
+    # 1. Explicit non-residential structured purpose (e.g. JD houseAttributes.housePurpose)
+    if p and "住宅" not in p:
+        if re.search(r"(车位|车库|泊位|储藏室|杂物间)", p):
+            return "parking"
+        if re.search(r"(工业|厂房|仓库|车间|生产)", p):
+            return "industrial"
+        if re.search(r"(土地|宗地|林地|农用地|耕地)", p):
+            return "land"
+        if re.search(r"(商业|商铺|办公|写字楼|酒店|宾馆|商场|商办|金融|餐饮|旅馆|营业)", p):
+            return "commercial"
 
-    if re.search(r"(工业|厂房|仓库|车间|工业用地|生产用房)", t):
+    # Pure parking / storage (exclude residential unit that merely includes an accessory parking spot)
+    has_residential_unit = bool(re.search(r"(\d+室|\d+单元|\d+户|住宅|别墅|公寓|商品房|复式(?!办公)|跃层)", t))
+    has_real_estate_cue = has_residential_unit or bool(
+        re.search(
+            r"(房产|不动产|房屋|房地产|楼|幢|栋|座|层|花园|小区|新村|苑|大厦|广场|中心|公馆|家园|山庄|湾|郡|府|庭|轩|阁|商铺|店面|车位|车库|厂房|车间|仓库|土地|宗地)",
+            t,
+        )
+    )
+
+    # 2. Non-real-estate movables/intangible assets mixed into category list
+    if not has_residential_unit and re.search(
+        r"(摆件|把玩|玉石|字画|手串|白板纸|纸张|存货|物资|机器设备|机械设备|车辆|机动车|轿车|客车|货车|股权|债权|商标|专利)",
+        t,
+    ):
+        return "other"
+
+    # 3. Industrial assets (avoid false positive on street names like '工业路')
+    if (
+        re.search(r"(厂房|仓库|车间|生产用房|工业用地|工业用房|工业厂房|工业房地产|工业地产|工业物业|工业园区?)", t)
+        and "住宅" not in t
+    ):
         return "industrial"
 
+    # 4. Land
     if re.search(r"(土地使用权|宗地|林地|农用地|耕地|宅基地)", t) and not has_residential_unit:
         return "land"
 
-    if re.search(r"(商铺|店面|商业用房|写字楼|办公楼|办公室|酒店|宾馆|商场|门面|底商)", t) and "住宅" not in t:
+    # 5. Commercial / office assets (checked before parking and category_hint fallback)
+    commercial_title_re = (
+        r"(商铺|店面|铺面|门面|底商|商业服务网点|商业网点|商业用房|商业裙房|商业房产|"
+        r"营业房|写字楼|办公楼|办公室|办公用房|复式办公|商务办公|商办|酒店|宾馆|商场|摊位|"
+        r"(?:一|二|三|四|五|六|七|八|九|十|负一|地下一|\d+)[层楼]商业(?!街|广场|中心)|"
+        r"\d+号店(?!附近|旁))"
+    )
+    if re.search(commercial_title_re, t) and "住宅" not in t:
         return "commercial"
 
-    if has_residential_unit or "住宅" in combined or category_hint in {"50025969", "12728", "住宅用房"}:
+    # 6. Pure parking / storage
+    if not has_residential_unit and re.search(r"(车位|车库|泊位|储藏室|杂物间|地下室)", t):
+        return "parking"
+
+    # 7. Explicit non-residential planned purpose in detail text
+    if detail_text and not has_residential_unit and "住宅" not in t:
+        snippet = detail_text[:1000]
+        if re.search(r"(?:房屋用途|规划用途|设计用途|用途)[：:\s]*(?:商业|商铺|办公|写字楼|商办|非住宅)", snippet):
+            return "commercial"
+        if re.search(r"(?:房屋用途|规划用途|设计用途|用途)[：:\s]*(?:工业|厂房|仓储)", snippet):
+            return "industrial"
+        if re.search(r"(?:房屋用途|规划用途|设计用途|用途)[：:\s]*(?:车位|车库)", snippet):
+            return "parking"
+
+    # 8. Residential unit / residential category fallback
+    if has_residential_unit or "住宅" in combined or "住宅" in p:
+        return "residential"
+    if has_real_estate_cue and category_hint in {"50025969", "12728", "住宅用房"}:
         return "residential"
 
-    if re.search(r"(商铺|商业|办公|写字楼)", combined):
+    if re.search(r"(商铺|商业服务网点|商业用房|商业|办公|写字楼|营业房)", combined):
         return "commercial"
 
     return "other"
@@ -330,13 +413,19 @@ def parse_property_info(
     explicit_district: str = "",
     address: str = "",
     category_hint: str = "",
+    purpose_hint: str = "",
     explicit_area: float | None = None,
     notice_text: str = "",
     survey_text: str = "",
 ) -> ParsedPropertyInfo:
     detail_text = f"{address}\n{notice_text}\n{survey_text}".strip()
     district = extract_district(f"{title} {address}", city=city, explicit_district=explicit_district)
-    property_type = classify_property_type(title, detail_text=detail_text, category_hint=category_hint)
+    property_type = classify_property_type(
+        title,
+        detail_text=detail_text,
+        category_hint=category_hint,
+        purpose_hint=purpose_hint,
+    )
     is_partial, share = extract_ownership_share(title, detail_text=detail_text)
     area_sqm = extract_area_sqm(title, detail_text=detail_text, explicit_area=explicit_area)
     community = extract_community_name(title, address=address)

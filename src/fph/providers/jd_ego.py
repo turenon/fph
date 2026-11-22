@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 from typing import Any
+from urllib.parse import urlsplit
 
 from fph.config import ProviderConfig, RegionConfig
 from fph.models import RawAuctionDetail, RawAuctionItem
@@ -34,11 +35,14 @@ from fph.providers.jd_urls import (
 def _normalize_jd_item_url(url: str, item_id: str = "") -> str:
     u = (url or "").strip()
     if u.startswith("//"):
-        return f"https:{u}"
-    if u.startswith("/"):
-        return f"https://paimai.jd.com{u}"
+        u = f"https:{u}"
+    elif u.startswith("/"):
+        u = f"https://paimai.jd.com{u}"
     if u:
-        return u
+        parsed = urlsplit(u)
+        host = (parsed.hostname or "").lower()
+        if parsed.scheme in {"http", "https"} and (host == "jd.com" or host.endswith(".jd.com")):
+            return u
     return build_jd_item_url(item_id) if item_id else ""
 
 
@@ -125,7 +129,27 @@ async function goToTargetPage(page, targetPage, timeoutMs) {{
     const selector = state.hasBtn
       ? `nav[aria-label="搜索结果分页"] button[data-page="${{targetPage}}"]`
       : 'nav[aria-label="搜索结果分页"] button[data-page="下一页"]';
-    await page.click(selector, {{ label: state.hasBtn ? `go to page ${{targetPage}}` : "next result page" }});
+    await page.evaluate((sel) => {{
+      const btn = document.querySelector(sel);
+      if (btn) btn.scrollIntoView({{ block: "center", inline: "center" }});
+    }}, selector);
+    await page.waitForTimeout(200);
+    try {{
+      await page.click(selector, {{
+        label: state.hasBtn ? `go to page ${{targetPage}}` : "next result page",
+        timeout: Math.min(timeoutMs, 10000),
+      }});
+    }} catch (_) {{
+      const clicked = await page.evaluate((sel) => {{
+        const btn = document.querySelector(sel);
+        if (btn && !btn.disabled) {{
+          btn.click();
+          return true;
+        }}
+        return false;
+      }}, selector);
+      if (!clicked) return false;
+    }}
     try {{
       await page.waitForFunction(
         (prevCur) => {{
@@ -245,13 +269,21 @@ async function run() {{
 
       const ha = (d.houseAttributes && typeof d.houseAttributes === "object") ? d.houseAttributes : {{}};
       const locText = Array.isArray(d.location) ? d.location.join(" ") : String(d.location || "");
+      const labelArr = Array.isArray(d.labelSet) ? d.labelSet : [];
+      const labelStage = labelArr.includes(1053)
+        ? "变卖"
+        : labelArr.includes(1052)
+          ? "二拍"
+          : labelArr.includes(1051)
+            ? "一拍"
+            : "";
 
       items.push({{
         id: paimaiId,
         title: String(d.title || "").trim(),
         url: `https://paimai.jd.com/${{paimaiId}}`,
         status: mappedStatus,
-        stage: badgeText || String(d.title || ""),
+        stage: badgeText || labelStage || String(d.title || ""),
         initialPrice: rt.startPrice ?? d.startPrice ?? null,
         currentPrice: rt.currentPrice ?? d.currentPrice ?? null,
         consultPrice: d.assessmentPrice ?? d.marketPrice ?? null,
@@ -262,6 +294,7 @@ async function run() {{
         start: rt.startTime ?? d.startTime ?? null,
         end: rt.endTime ?? d.endTime ?? null,
         areaSqm: ha.houseArea ?? null,
+        housePurpose: ha.housePurpose ? String(ha.housePurpose).trim() : "",
         communityName: ha.plotName ? String(ha.plotName).trim() : "",
         location: locText,
         raw: {{ data: d, realtimeInfo: rt }},
@@ -438,16 +471,31 @@ async function run() {{
     const h1 = document.querySelector('h1, .pm-name, .item-title, [class*="title"] h1');
     const itemTitle = h1 ? (h1.innerText || "").trim() : title.replace(/-京东拍卖.*$/, "").trim();
 
-    const noticeEl = document.querySelector('#J_NoticeDetail, .notice-detail, [id*="notice" i], [class*="notice" i], [class*="announcement" i]');
-    const surveyEl = document.querySelector('#J_ItemDesc, .item-desc, [id*="intro" i], [class*="introduce" i], [class*="survey" i], [class*="detail-content" i]');
+    // Scope price/status/bid extraction to the primary item header area to avoid matching bottom recommendations
+    const mainArea = document.querySelector('.pm-main, .paimai-info, .product-intro, #main-info, [class*="detail-top"], [class*="item-info"]');
+    const headRaw = mainArea ? (mainArea.innerText || "") : "";
+    const headText = (headRaw.length >= 40 ? headRaw : bodyText).slice(0, 2500);
+    const pickHead = (re) => {{
+      const m = headText.match(re);
+      return m ? m[1].trim() : null;
+    }};
 
-    const noticeText = noticeEl ? (noticeEl.innerText || "").trim() : bodyText.slice(0, 6000);
-    const surveyText = surveyEl ? (surveyEl.innerText || "").trim() : "";
+    const noticeEls = Array.from(document.querySelectorAll('#J_NoticeDetail, .notice-detail, [id*="notice" i], [class*="notice" i], [class*="announcement" i]'));
+    const bestNotice = noticeEls
+      .map((el) => (el.innerText || "").trim())
+      .filter((t) => t.length >= 300 && !t.startsWith("1. 参与司法拍卖需要做的准备工作"))
+      .sort((a, b) => b.length - a.length)[0] || "";
+    const surveyEl = document.querySelector('#J_ItemDesc, .item-desc, [id*="intro" i], [class*="introduce" i], [class*="survey" i], [class*="detail-content" i]');
+    const surveyRaw = surveyEl ? (surveyEl.innerText || "").trim() : "";
+
+    const noticeText = bestNotice || bodyText.slice(0, 12000);
+    const surveyText = surveyRaw.length >= 120 ? surveyRaw : bodyText.slice(0, 8000);
 
     const courtEl = document.querySelector('[class*="court" i], [class*="agency" i], [class*="organ" i], .unit-txt');
-    const courtName = courtEl
+    const rawCourt = courtEl
       ? (courtEl.innerText || "").trim()
-      : (pick(/(?:处置单位|送拍机构|处置法院|拍品所属)[：:\\s]*([^\\n]{{2,36}})/) || "");
+      : (pick(/(?:处置单位|送拍机构|处置法院|拍品所属)[：:]\\s*([^\\n]{{2,36}})/) || "");
+    const courtName = (rawCourt && rawCourt.length <= 40 && !/[。，；]/.test(rawCourt)) ? rawCourt : "";
 
     const address = pick(/(?:标的物所在地|标的物地址|房产坐落|坐落|地址)[：:\\s]*([^\\n]{{4,80}})/) || "";
     const areaSqm = pick(/建筑面积[：:约为\\s]*([0-9]+(?:\\.[0-9]+)?)\\s*(?:平方米|平米|㎡|m²|m2)/i);
@@ -456,14 +504,14 @@ async function run() {{
       authRequired: false,
       currentUrl: href,
       title: itemTitle,
-      status: pick(/(竞价成功|拍卖已成交|已成交|本场已流拍|已流拍|流标|正在进行|进行中|拍卖中|即将开始|即将开拍|预告中|已撤回|已下架|已中止|已暂缓|已暂停|已结束)/) || "",
-      currentPrice: pick(/(?:成交价|当前价|变卖价)[：:\\s]*[¥￥]?([0-9.,]+\\s*[万亿]?)/),
-      initialPrice: pick(/起\\s*拍\\s*价[：:\\s]*[¥￥]?([0-9.,]+\\s*[万亿]?)/),
-      consultPrice: pick(/(?:评\\s*估\\s*价|市\\s*场\\s*价)[：:\\s]*[¥￥]?([0-9.,]+\\s*[万亿]?)/),
-      depositPrice: pick(/保\\s*证\\s*金[：:\\s]*[¥￥]?([0-9.,]+\\s*[万亿]?)/),
-      bidCount: pick(/(\\d+)\\s*次出价/) || pick(/出价记录\\s*[（(](\\d+)[）)]/),
-      applyCount: pick(/(\\d+)\\s*人报名/),
-      watchCount: pick(/(\\d+)\\s*(?:次|人)?围观/),
+      status: pickHead(/(竞价成功|拍卖已成交|已成交|本场已流拍|已流拍|流标|正在进行|进行中|拍卖中|即将开始|即将开拍|预告中|已撤回|已下架|已中止|已暂缓|已暂停|已结束)/) || "",
+      currentPrice: pickHead(/(?:成交价|当前价|变卖价)[：:\\s]*[¥￥]?([0-9.,]+\\s*[万亿]?)/),
+      initialPrice: pickHead(/起\\s*拍\\s*价[：:\\s]*[¥￥]?([0-9.,]+\\s*[万亿]?)/),
+      consultPrice: pickHead(/(?:评\\s*估\\s*价|市\\s*场\\s*价)[：:\\s]*[¥￥]?([0-9.,]+\\s*[万亿]?)/),
+      depositPrice: pickHead(/保\\s*证\\s*金[：:\\s]*[¥￥]?([0-9.,]+\\s*[万亿]?)/),
+      bidCount: pickHead(/(\\d+)\\s*次出价/) || pickHead(/出价记录\\s*[（(](\\d+)[）)]/),
+      applyCount: pickHead(/(\\d+)\\s*人报名/),
+      watchCount: pickHead(/(\\d+)\\s*(?:次|人)?围观/),
       courtName,
       address,
       areaSqm,
@@ -550,6 +598,16 @@ class JdEgoProvider(AuctionProvider):
             loc_text = str(raw.get("location") or "").strip()
             district = extract_district(f"{loc_text} {title}", city=region.city)
             area_sqm = _parse_optional_area(raw.get("areaSqm"))
+            raw_payload = raw.get("raw") if isinstance(raw.get("raw"), dict) else raw
+            stage_hint = str(raw.get("stage") or "").strip()
+            if not stage_hint and isinstance(raw_payload, dict):
+                labels = (raw_payload.get("data") or {}).get("labelSet") or []
+                if 1053 in labels:
+                    stage_hint = "变卖"
+                elif 1052 in labels:
+                    stage_hint = "二拍"
+                elif 1051 in labels:
+                    stage_hint = "一拍"
 
             items.append(
                 RawAuctionItem(
@@ -560,7 +618,7 @@ class JdEgoProvider(AuctionProvider):
                     province=region.province,
                     city=region.city,
                     district=district,
-                    stage=normalize_stage(str(raw.get("stage") or ""), title),
+                    stage=normalize_stage(stage_hint, title),
                     status=normalize_status(raw_status, bid_count=bid_count),
                     initial_price=parse_price_yuan(raw.get("initialPrice")),
                     current_price=parse_price_yuan(raw.get("currentPrice")),
@@ -573,6 +631,7 @@ class JdEgoProvider(AuctionProvider):
                     end_time=normalize_datetime(raw.get("end")),
                     court_name=str(raw.get("courtName") or "").strip(),
                     category_hint=cat_hint,
+                    purpose_hint=str(raw.get("housePurpose") or "").strip(),
                     raw_payload=raw.get("raw") if isinstance(raw.get("raw"), dict) else raw,
                     community_name=str(raw.get("communityName") or "").strip(),
                     area_sqm=area_sqm,
@@ -581,8 +640,6 @@ class JdEgoProvider(AuctionProvider):
 
         total_pages = _to_int(data.get("totalPages"))
         has_next = bool(data.get("hasNext"))
-        if total_pages is not None and page >= total_pages:
-            has_next = False
 
         return PageResult(
             items=items,
@@ -610,20 +667,28 @@ class JdEgoProvider(AuctionProvider):
             f"{notice_text}\n{survey_text}",
         )
 
+        detail_status = normalize_status(str(data.get("status") or ""), bid_count=bid_count)
+        initial_price = parse_price_yuan(data.get("initialPrice"))
+        current_price = parse_price_yuan(data.get("currentPrice"))
+        if detail_status == "upcoming" and initial_price is not None:
+            current_price = initial_price
+
         return RawAuctionDetail(
             platform=self.platform,
             item_id=item_id,
             url=str(data.get("currentUrl") or target_url),
             title=title,
-            status=normalize_status(str(data.get("status") or ""), bid_count=bid_count),
-            current_price=parse_price_yuan(data.get("currentPrice")),
-            initial_price=parse_price_yuan(data.get("initialPrice")),
+            status=detail_status,
+            current_price=current_price,
+            initial_price=initial_price,
             consult_price=parse_price_yuan(data.get("consultPrice")),
             deposit_price=parse_price_yuan(data.get("depositPrice")),
             bid_count=bid_count,
             apply_count=_to_int(data.get("applyCount")),
             watch_count=_to_int(data.get("watchCount")),
-            court_name=str(data.get("courtName") or "").strip(),
+            court_name=(
+                lambda c: c if (c and len(c) <= 40 and not any(bad in c for bad in ("。", "，", "；", "保证金", "竞拍活动"))) else ""
+            )(str(data.get("courtName") or "").strip()),
             address=str(data.get("address") or "").strip(),
             area_sqm=area_sqm,
             notice_text=notice_text,

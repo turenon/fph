@@ -9,13 +9,21 @@ from pathlib import Path
 from typing import Any
 
 from fph.analytics import export_dataset, find_bargain_candidates, get_market_summary
-from fph.config import AppConfig, load_config
+from fph.config import (
+    AppConfig,
+    load_config,
+    normalize_property_types,
+    normalize_statuses,
+    resolve_allowed_property_types,
+)
 from fph.db import AuctionDB, now_str
 from fph.pipeline import (
     SyncPipeline,
+    _cutoff_datetime_str,
     build_provider,
     build_providers,
     normalize_provider_name,
+    prompt_user_for_auth,
     resolve_region_provider_name,
 )
 from fph.scheduler import run_scheduler
@@ -101,14 +109,61 @@ def _cmd_init(args: argparse.Namespace) -> int:
     return 0
 
 
+def _resolve_cli_property_types(args: argparse.Namespace) -> list[str] | None:
+    if getattr(args, "only_residential", False):
+        return ["residential"]
+    raw = getattr(args, "property_types", None)
+    if raw is not None:
+        return normalize_property_types(raw)
+    return None
+
+
 def _cmd_doctor(args: argparse.Namespace) -> int:
     cfg = _load_or_default(args.config)
     print(f"系统环境: {platform.system()} {platform.release()} | Python {platform.python_version()}")
     print(f"数据库路径: {cfg.storage.db_path.resolve()}")
-    with AuctionDB(cfg.storage.db_path) as db:
-        prop_cnt = db.conn.execute("SELECT COUNT(*) FROM properties").fetchone()[0]
-        round_cnt = db.conn.execute("SELECT COUNT(*) FROM auction_rounds").fetchone()[0]
-        print(f"当前入库统计: 标的物 {prop_cnt} 套 | 拍卖轮次 {round_cnt} 条")
+    global_types = resolve_allowed_property_types(cfg)
+    filter_desc = ", ".join(global_types) if global_types else "全部类型（未限制）"
+    print(f"采集物业类型过滤: {filter_desc}")
+    lookback_desc = f"最近 {cfg.provider.lookback_days} 天" if cfg.provider.lookback_days > 0 else "不限制"
+    print(f"历史时间窗口: {lookback_desc}")
+    enrich_statuses_desc = (
+        ", ".join(cfg.provider.enrich_statuses) if cfg.provider.enrich_statuses else "全部状态（未限制）"
+    )
+    print(f"详情补抓状态: {enrich_statuses_desc}")
+    print(f"已结束整页早停: {'开启' if cfg.provider.stop_on_known_ended_page else '关闭'}")
+    refresh_window_desc = (
+        f"{cfg.provider.ended_refresh_window_days} 天"
+        if cfg.provider.ended_refresh_window_days > 0
+        else "不限制"
+    )
+    print(
+        f"重试策略: 详情最多 {cfg.provider.max_detail_attempts} 次 / "
+        f"回刷最多 {cfg.provider.max_refresh_attempts} 次 / "
+        f"冷却 {cfg.provider.retry_cooldown_hours} 小时 / "
+        f"回刷窗口 {refresh_window_desc}"
+    )
+    print(
+        f"断点回填策略: 首次回填单次最多 {cfg.provider.backfill_max_pages} 页 / "
+        f"日常增量 {cfg.provider.max_pages_per_query} 页 / "
+        f"验证弹窗等待 {cfg.provider.auth_wait_timeout_seconds} 秒"
+    )
+    if cfg.storage.db_path.exists() and cfg.storage.db_path.stat().st_size > 0:
+        with AuctionDB(cfg.storage.db_path, read_only=True) as db:
+            prop_cnt = db.conn.execute("SELECT COUNT(*) FROM properties").fetchone()[0]
+            round_cnt = db.conn.execute("SELECT COUNT(*) FROM auction_rounds").fetchone()[0]
+            print(f"当前入库统计: 标的物 {prop_cnt} 套 | 拍卖轮次 {round_cnt} 条")
+            checkpoints = db.list_checkpoints()
+            if checkpoints:
+                print("回填断点进度:")
+                for cp in checkpoints:
+                    state = "已完成回填（增量模式）" if cp["backfill_completed"] else f"待从第 {cp['next_page']} 页续采 ({cp['last_status']})"
+                    print(f"  - [{cp['provider']}] {cp['region_name']} [{cp['scope']}]: {state}")
+    else:
+        with AuctionDB(cfg.storage.db_path) as db:
+            prop_cnt = db.conn.execute("SELECT COUNT(*) FROM properties").fetchone()[0]
+            round_cnt = db.conn.execute("SELECT COUNT(*) FROM auction_rounds").fetchone()[0]
+            print(f"当前入库统计: 标的物 {prop_cnt} 套 | 拍卖轮次 {round_cnt} 条")
 
     providers = build_providers(cfg)
     all_ok = True
@@ -121,35 +176,67 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
     for region in cfg.regions:
         pname = resolve_region_provider_name(cfg, region)
         prov = providers[pname]
+        override_note = ""
+        if region.allowed_property_types is not None:
+            eff_types = resolve_allowed_property_types(cfg, region)
+            override_note = f" [类型过滤: {', '.join(eff_types) if eff_types else '全部类型'}]"
         for scope in region.status_scopes:
             for label, st_param in prov.expand_status_queries(scope):
                 preview_url = prov.preview_list_url(region, st_param=st_param, page=1)
-                print(f"  - [{prov.platform}] {region.name} [{label}]: {preview_url}")
+                print(f"  - [{prov.platform}] {region.name}{override_note} [{label}]: {preview_url}")
     return 0 if all_ok else 1
 
 
 def _cmd_sync(args: argparse.Namespace) -> int:
     cfg = _load_or_default(args.config)
+    try:
+        cli_property_types = _resolve_cli_property_types(args)
+        cli_enrich_statuses = (
+            normalize_statuses(args.enrich_statuses)
+            if args.enrich_statuses is not None
+            else None
+        )
+        if args.lookback_days is not None and args.lookback_days < 0:
+            raise ValueError("--lookback-days 不能为负数")
+    except ValueError as exc:
+        print(f"参数错误: {exc}", file=sys.stderr)
+        return 2
     providers = build_providers(cfg)
     if args.provider:
         pnorm = normalize_provider_name(args.provider)
         if pnorm not in providers:
             providers[pnorm] = build_provider(cfg, pnorm)
+    auth_handler = (
+        None
+        if (getattr(args, "no_wait_auth", False) or cfg.provider.auth_wait_timeout_seconds <= 0)
+        else (lambda exc: prompt_user_for_auth(exc, timeout_seconds=cfg.provider.auth_wait_timeout_seconds))
+    )
     with AuctionDB(cfg.storage.db_path) as db:
-        pipeline = SyncPipeline(cfg, db, providers=providers)
+        if getattr(args, "reset_checkpoint", False):
+            p_filter = normalize_provider_name(args.provider) if args.provider else None
+            p_platform = {"taobao_ego": "taobao", "jd_ego": "jd"}.get(p_filter or "", p_filter)
+            cleared = db.reset_checkpoints(provider=p_platform, region_name=args.region)
+            print(f"已重置 {cleared} 条回填断点记录。")
+        pipeline = SyncPipeline(cfg, db, providers=providers, auth_handler=auth_handler)
         summaries = pipeline.run_full_cycle(
             region_filter=args.region,
             provider_filter=args.provider,
             max_pages=args.max_pages,
             enrich_details=not args.no_enrich,
             refresh_ended=not args.no_refresh_ended,
+            allowed_property_types=cli_property_types,
+            active_only=args.active_only,
+            lookback_days=args.lookback_days,
+            enrich_statuses=cli_enrich_statuses,
         )
 
     exit_code = 0
     for s in summaries:
         print(
             f"[{s.provider}/{s.region_name}] 状态={s.status} | 抓取页数={s.pages_fetched} | "
-            f"扫描条目={s.items_seen} | 新增标的={s.properties_created} | "
+            f"扫描条目={s.items_seen} | 过滤跳过={s.items_filtered} | "
+            f"超期跳过={s.items_skipped_old} | 已终态跳过={s.items_skipped_existing} | "
+            f"新增标的={s.properties_created} | "
             f"补抓详情={s.details_enriched} | 回刷结拍={s.ended_refreshed}"
         )
         if s.message:
@@ -161,21 +248,93 @@ def _cmd_sync(args: argparse.Namespace) -> int:
 
 def _cmd_enrich(args: argparse.Namespace) -> int:
     cfg = _load_or_default(args.config)
+    try:
+        cli_property_types = _resolve_cli_property_types(args)
+        cli_statuses = normalize_statuses(args.statuses) if args.statuses is not None else None
+        if args.lookback_days is not None and args.lookback_days < 0:
+            raise ValueError("--lookback-days 不能为负数")
+    except ValueError as exc:
+        print(f"参数错误: {exc}", file=sys.stderr)
+        return 2
     providers = build_providers(cfg)
     if args.provider:
         pnorm = normalize_provider_name(args.provider)
         if pnorm not in providers:
             providers[pnorm] = build_provider(cfg, pnorm)
+    auth_handler = (
+        None
+        if (getattr(args, "no_wait_auth", False) or cfg.provider.auth_wait_timeout_seconds <= 0)
+        else (lambda exc: prompt_user_for_auth(exc, timeout_seconds=cfg.provider.auth_wait_timeout_seconds))
+    )
     with AuctionDB(cfg.storage.db_path) as db:
-        pipeline = SyncPipeline(cfg, db, providers=providers)
+        pipeline = SyncPipeline(cfg, db, providers=providers, auth_handler=auth_handler)
         count, auth_err = pipeline.enrich_missing_details(
             limit=args.limit,
             provider_filter=args.provider,
+            allowed_property_types=cli_property_types,
+            allowed_statuses=cli_statuses,
+            lookback_days=args.lookback_days,
         )
         print(f"本次补抓详情与公告完成: {count} 条")
         if auth_err:
             print(f"中断提示: {auth_err}")
             return 2
+    return 0
+
+
+def _cmd_cleanup(args: argparse.Namespace) -> int:
+    cfg = _load_or_default(args.config)
+    if args.lookback_days is not None and args.lookback_days < 0:
+        print("参数错误: --lookback-days 不能为负数", file=sys.stderr)
+        return 2
+
+    eff_lookback = cfg.provider.lookback_days if args.lookback_days is None else args.lookback_days
+    min_date = _cutoff_datetime_str(eff_lookback)
+    allowed_types = None if args.keep_non_residential else (resolve_allowed_property_types(cfg) or None)
+    reset_captcha = not args.no_reset_captcha
+    dry_run = bool(args.dry_run)
+
+    if dry_run and not (cfg.storage.db_path.exists() and cfg.storage.db_path.stat().st_size > 0):
+        result: dict[str, Any] = {
+            "expired_rounds": 0,
+            "non_target_type_rounds": 0,
+            "total_delete_rounds": 0,
+            "orphan_properties": 0,
+            "captcha_reset_rounds": 0,
+            "revocation_fixed_rounds": 0,
+            "dry_run": True,
+        }
+    else:
+        use_read_only = dry_run and cfg.storage.db_path.exists() and cfg.storage.db_path.stat().st_size > 0
+        with AuctionDB(cfg.storage.db_path, read_only=use_read_only) as db:
+            result = db.cleanup_stale_data(
+                min_date=min_date,
+                allowed_property_types=allowed_types,
+                reset_captcha_details=reset_captcha,
+                dry_run=dry_run,
+            )
+
+    is_dry_run = bool(result.get("dry_run", dry_run))
+    mode_label = "预览模式，未修改数据库" if is_dry_run else "已执行清理"
+    action_prefix = "待" if is_dry_run else "已"
+    cutoff_desc = f"早于 {min_date}（最近 {eff_lookback} 天）" if min_date else "未启用"
+    type_desc = ", ".join(allowed_types) if allowed_types else "不限制（保留非目标物业类型）"
+
+    print(f"历史数据清理 [{mode_label}] - {cfg.storage.db_path.resolve()}")
+    print(
+        f"  清理策略: 时间窗口={cutoff_desc} | 保留物业类型={type_desc} | "
+        f"重置滑块详情={'是' if reset_captcha else '否'}"
+    )
+    print(f"  超期历史轮次: {result['expired_rounds']} 条")
+    print(f"  非目标物业轮次: {result['non_target_type_rounds']} 条")
+    print(f"  {action_prefix}删轮次合计（去重）: {result['total_delete_rounds']} 条")
+    print(f"  {action_prefix}删孤立标的物: {result['orphan_properties']} 套")
+    print(f"  {action_prefix}重置滑块污染详情: {result['captcha_reset_rounds']} 条")
+    print(f"  {action_prefix}修复撤拍(revocation)状态: {result['revocation_fixed_rounds']} 条")
+    if is_dry_run:
+        print("提示: 当前为预览模式，未修改数据库；确认无误后去掉 --dry-run 执行实际清理。")
+    else:
+        print("清理完成，数据库已更新。")
     return 0
 
 
@@ -312,12 +471,45 @@ def build_parser() -> argparse.ArgumentParser:
     p_sync.add_argument("--max-pages", type=int, help="覆盖单次最大翻页数")
     p_sync.add_argument("--no-enrich", action="store_true", help="本次跳过详情/公告补抓")
     p_sync.add_argument("--no-refresh-ended", action="store_true", help="本次跳过已结拍结果回刷")
+    p_sync.add_argument("--active-only", action="store_true", help="仅同步正在进行与即将开始（跳过已结束列表）")
+    p_sync.add_argument("--lookback-days", type=int, help="覆盖历史时间窗口天数（0 表示不限制）")
+    p_sync.add_argument(
+        "--enrich-statuses",
+        help="覆盖自动补抓详情的状态列表，逗号分隔（如 ongoing,upcoming；传 all 表示不限制）",
+    )
+    p_sync.add_argument("--no-wait-auth", action="store_true", help="遇到滑块/登录时不弹窗等待，直接保存断点并退出")
+    p_sync.add_argument("--reset-checkpoint", action="store_true", help="重置已结束列表的回填断点，从第 1 页重新回填")
+    p_sync_types = p_sync.add_mutually_exclusive_group()
+    p_sync_types.add_argument("--only-residential", action="store_true", help="本次仅采集与处理住宅类型（residential），覆盖配置")
+    p_sync_types.add_argument(
+        "--property-types",
+        help="覆盖配置指定采集物业类型，逗号分隔（如 residential,commercial；传 all 表示不过滤）",
+    )
     p_sync.set_defaults(func=_cmd_sync)
 
     p_enrich = sub.add_parser("enrich", help="单独补抓缺失详情与公告的标的")
     p_enrich.add_argument("--limit", type=int, default=20, help="本次最多补抓条数")
     p_enrich.add_argument("--provider", help="仅补抓指定采集平台（如 taobao / jd / taobao_ego / jd_ego）")
+    p_enrich.add_argument(
+        "--statuses",
+        help="覆盖配置指定补抓状态列表，逗号分隔（如 ongoing,upcoming 或 sold；传 all 表示不限制）",
+    )
+    p_enrich.add_argument("--lookback-days", type=int, help="覆盖历史时间窗口天数（0 表示不限制）")
+    p_enrich.add_argument("--no-wait-auth", action="store_true", help="遇到滑块/登录时不弹窗等待，直接退出")
+    p_enrich_types = p_enrich.add_mutually_exclusive_group()
+    p_enrich_types.add_argument("--only-residential", action="store_true", help="本次仅补抓住宅类型（residential），覆盖配置")
+    p_enrich_types.add_argument(
+        "--property-types",
+        help="覆盖配置指定补抓物业类型，逗号分隔（如 residential,commercial；传 all 表示不过滤）",
+    )
     p_enrich.set_defaults(func=_cmd_enrich)
+
+    p_cleanup = sub.add_parser("cleanup", help="清理超期历史记录、非目标物业类型，并修复滑块污染与撤拍状态")
+    p_cleanup.add_argument("--dry-run", action="store_true", help="仅预览待清理与修复统计，不修改数据库")
+    p_cleanup.add_argument("--lookback-days", type=int, help="覆盖历史时间窗口天数（默认读取配置，0 表示不按时间清理）")
+    p_cleanup.add_argument("--keep-non-residential", action="store_true", help="保留非目标物业类型记录，不按物业类型清理")
+    p_cleanup.add_argument("--no-reset-captcha", action="store_true", help="不重置被滑块验证污染的详情记录")
+    p_cleanup.set_defaults(func=_cmd_cleanup)
 
     p_stats = sub.add_parser("stats", help="查看区域住宅法拍行情统计（成交率、均折、单价）")
     p_stats.add_argument("--city", help="按城市过滤（如 福州 / 龙岩）")

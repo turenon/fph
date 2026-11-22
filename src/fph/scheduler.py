@@ -28,25 +28,31 @@ def run_scheduler(config: AppConfig, *, run_immediately: bool = True) -> None:
     try:
         while True:
             if not first or run_immediately:
-                with AuctionDB(config.storage.db_path) as db:
-                    providers = build_providers(config)
-                    pipeline = SyncPipeline(config, db, providers=providers)
-                    summaries = pipeline.run_full_cycle(
-                        enrich_details=config.schedule.auto_enrich_details,
-                        refresh_ended=config.schedule.auto_refresh_ended,
-                    )
-                    for s in summaries:
-                        logger.info(
-                            "[%s] status=%s pages=%d seen=%d new_props=%d enriched=%d refreshed=%d %s",
-                            s.region_name,
-                            s.status,
-                            s.pages_fetched,
-                            s.items_seen,
-                            s.properties_created,
-                            s.details_enriched,
-                            s.ended_refreshed,
-                            s.message,
+                try:
+                    with AuctionDB(config.storage.db_path) as db:
+                        providers = build_providers(config)
+                        pipeline = SyncPipeline(config, db, providers=providers)
+                        summaries = pipeline.run_full_cycle(
+                            enrich_details=config.schedule.auto_enrich_details,
+                            refresh_ended=config.schedule.auto_refresh_ended,
                         )
+                        for s in summaries:
+                            logger.info(
+                                "[%s] status=%s pages=%d seen=%d filtered=%d skipped_old=%d skipped_existing=%d new_props=%d enriched=%d refreshed=%d %s",
+                                s.region_name,
+                                s.status,
+                                s.pages_fetched,
+                                s.items_seen,
+                                s.items_filtered,
+                                s.items_skipped_old,
+                                s.items_skipped_existing,
+                                s.properties_created,
+                                s.details_enriched,
+                                s.ended_refreshed,
+                                s.message,
+                            )
+                except Exception:
+                    logger.exception("本轮定时采集执行异常，将在下个周期继续重试")
             first = False
 
             wait_seconds = interval_min * 60 + random.randint(0, jitter_min * 60)

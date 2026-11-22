@@ -104,9 +104,19 @@ class JdEgoAndMultiPlatformTest(unittest.TestCase):
                         "start": 1762740000000,
                         "end": 1762826400000,
                         "areaSqm": 102.5,
+                        "housePurpose": "住宅",
                         "communityName": "温泉花园",
                         "location": "福建 福州市 鼓楼区",
-                    }
+                    },
+                    {
+                        "id": "777002",
+                        "title": "福州市仓山区某小区1幢101室住宅",
+                        "url": "https://paimai.jd.com/777002",
+                        "status": "正在进行",
+                        "stage": "",
+                        "initialPrice": 1200000,
+                        "raw": {"data": {"labelSet": [1027, 1051, 1115]}},
+                    },
                 ],
             }
             return 0, "", f"{MARKER_START}{json.dumps(payload, ensure_ascii=False)}{MARKER_END}\n"
@@ -118,14 +128,17 @@ class JdEgoAndMultiPlatformTest(unittest.TestCase):
         self.assertEqual(page_res.extractor, "react-fiber")
         self.assertTrue(page_res.has_next)
         self.assertEqual(page_res.total_pages, 3)
-        self.assertEqual(len(page_res.items), 1)
+        self.assertEqual(len(page_res.items), 2)
         item = page_res.items[0]
         self.assertEqual(item.platform, "jd")
         self.assertEqual(item.district, "鼓楼区")
         self.assertEqual(item.stage, "二拍")
         self.assertEqual(item.status, "ongoing")
         self.assertEqual(item.area_sqm, 102.5)
+        self.assertEqual(item.purpose_hint, "住宅")
         self.assertEqual(item.community_name, "温泉花园")
+        self.assertEqual(page_res.items[1].stage, "一拍")
+        self.assertIn("housePurpose", captured_scripts[0])
         self.assertIn('"page": 2', captured_scripts[0])
         self.assertIn("goToTargetPage", captured_scripts[0])
 
@@ -277,6 +290,160 @@ class JdEgoAndMultiPlatformTest(unittest.TestCase):
                 by_plat = {s.provider: s for s in both_sums}
                 self.assertEqual(by_plat["taobao"].status, "auth_required")
                 self.assertEqual(by_plat["jd"].status, "success")
+
+    def test_jd_residential_only_filtering_with_purpose_hint(self) -> None:
+        def jd_runner(cmd: list[str], stdin_text: str, timeout: int) -> tuple[int, str, str]:
+            payload = {
+                "authRequired": False,
+                "currentUrl": "https://pmsearch.jd.com/",
+                "extractor": "react-fiber",
+                "totalPages": 1,
+                "hasNext": False,
+                "items": [
+                    {
+                        "id": "jd_res_ok",
+                        "title": "福州市台江区茶亭街道八一七中路与工业路北侧交叉处君临盛世茶亭地块九2#楼3205单元",
+                        "url": "https://paimai.jd.com/jd_res_ok",
+                        "status": "即将开拍",
+                        "initialPrice": 1200000,
+                        "housePurpose": "住宅",
+                        "location": "福建 福州市 台江区",
+                    },
+                    {
+                        "id": "jd_comm_skip",
+                        "title": "福州市仓山区竹榄路清逸华庭11#楼1层11商业服务网点（兼容餐饮）",
+                        "url": "https://paimai.jd.com/jd_comm_skip",
+                        "status": "正在进行",
+                        "initialPrice": 800000,
+                        "housePurpose": "",
+                        "location": "福建 福州市 仓山区",
+                    },
+                    {
+                        "id": "jd_park_skip",
+                        "title": "晋安区鲁能花园一期地下室地下1层0164车位",
+                        "url": "https://paimai.jd.com/jd_park_skip",
+                        "status": "正在进行",
+                        "initialPrice": 90000,
+                        "housePurpose": "",
+                        "location": "福建 福州市 晋安区",
+                    },
+                    {
+                        "id": "jd_purpose_skip",
+                        "title": "福州市鼓楼区五四路168号某房产",
+                        "url": "https://paimai.jd.com/jd_purpose_skip",
+                        "status": "正在进行",
+                        "initialPrice": 2000000,
+                        "housePurpose": "商业办公",
+                        "location": "福建 福州市 鼓楼区",
+                    },
+                ],
+            }
+            return 0, "", f"{MARKER_START}{json.dumps(payload, ensure_ascii=False)}{MARKER_END}"
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = AppConfig(
+                storage=StorageConfig(db_path=Path(tmpdir) / "jd_filter.db"),
+                provider=ProviderConfig(
+                    min_delay_seconds=0,
+                    max_delay_seconds=0,
+                    max_pages_per_query=1,
+                    allowed_property_types=["residential"],
+                ),
+                regions=[
+                    RegionConfig(
+                        name="福州市-住宅-京东",
+                        provider="jd_ego",
+                        province="福建",
+                        city="福州",
+                        jd_province_id="16",
+                        jd_city_id="1303",
+                        status_scopes=["ongoing"],
+                    )
+                ],
+            )
+            with AuctionDB(cfg.storage.db_path) as db:
+                pipeline = SyncPipeline(
+                    cfg,
+                    db,
+                    providers={"jd_ego": JdEgoProvider(cfg.provider, runner=jd_runner)},
+                    sleep_fn=lambda _: None,
+                )
+                sums = pipeline.run_full_cycle(enrich_details=False, refresh_ended=False)
+                self.assertEqual(len(sums), 1)
+                self.assertEqual(sums[0].items_seen, 4)
+                self.assertEqual(sums[0].items_filtered, 3)
+                self.assertEqual(sums[0].rounds_upserted, 1)
+                rows = db.conn.execute("SELECT item_id, property_type FROM v_auction_full").fetchall()
+                self.assertEqual(len(rows), 1)
+                self.assertEqual(rows[0]["item_id"], "jd_res_ok")
+                self.assertEqual(rows[0]["property_type"], "residential")
+
+    def test_upcoming_detail_ignores_lower_recommended_current_price(self) -> None:
+        from fph.models import RawAuctionDetail, RawAuctionItem
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = AppConfig(storage=StorageConfig(db_path=Path(tmpdir) / "jd_price.db"))
+            with AuctionDB(cfg.storage.db_path) as db:
+                db.upsert_list_item(
+                    RawAuctionItem(
+                        platform="jd",
+                        item_id="311515686",
+                        url="https://paimai.jd.com/311515686",
+                        title="龙岩新罗区某房产",
+                        province="福建",
+                        city="龙岩",
+                        stage="一拍",
+                        status="upcoming",
+                        initial_price=730000.0,
+                        current_price=730000.0,
+                        consult_price=912500.0,
+                        bid_count=0,
+                    )
+                )
+                # Even if a detail scrape picks up a lower recommended item's price, DB protects upcoming round
+                db.apply_detail(
+                    RawAuctionDetail(
+                        platform="jd",
+                        item_id="311515686",
+                        url="https://paimai.jd.com/311515686",
+                        title="龙岩新罗区某房产",
+                        status="upcoming",
+                        initial_price=730000.0,
+                        current_price=496000.0,
+                        bid_count=0,
+                    )
+                )
+                row = db.conn.execute(
+                    "SELECT initial_price, current_price FROM auction_rounds WHERE item_id = '311515686'"
+                ).fetchone()
+                self.assertEqual(row["initial_price"], 730000.0)
+                self.assertEqual(row["current_price"], 730000.0)
+
+            def fake_detail_runner(cmd: list[str], stdin_text: str, timeout: int) -> tuple[int, str, str]:
+                return (
+                    0,
+                    "__FPH_JSON_START__"
+                    + json.dumps(
+                        {
+                            "authRequired": False,
+                            "currentUrl": "https://paimai.jd.com/311515686",
+                            "title": "龙岩新罗区某房产",
+                            "status": "即将开始",
+                            "initialPrice": "73万",
+                            "currentPrice": "49.60万",
+                            "bidCount": "0",
+                        },
+                        ensure_ascii=False,
+                    )
+                    + "__FPH_JSON_END__",
+                    "",
+                )
+
+            prov = JdEgoProvider(cfg.provider, runner=fake_detail_runner)
+            detail = prov.fetch_detail("311515686", "https://paimai.jd.com/311515686")
+            self.assertEqual(detail.status, "upcoming")
+            self.assertEqual(detail.initial_price, 730000.0)
+            self.assertEqual(detail.current_price, 730000.0)
 
 
 if __name__ == "__main__":

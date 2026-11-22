@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from collections.abc import Sequence
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any
 
 from fph.models import RawAuctionDetail, RawAuctionItem, SyncSummary
 from fph.normalizer import (
+    classify_property_type,
     normalize_datetime,
     normalize_stage,
     normalize_status,
@@ -15,6 +17,19 @@ from fph.normalizer import (
 )
 
 CN_TZ = timezone(timedelta(hours=8))
+
+_AUCTION_ROUNDS_MIGRATIONS: tuple[tuple[str, str], ...] = (
+    ("detail_attempts", "INTEGER NOT NULL DEFAULT 0"),
+    ("detail_last_attempt_at", "TEXT"),
+    ("refresh_attempts", "INTEGER NOT NULL DEFAULT 0"),
+    ("refresh_last_attempt_at", "TEXT"),
+)
+
+_CAPTCHA_NOTICE_MARKERS: tuple[str, ...] = (
+    "拖动下方滑块",
+    "请按住滑块",
+    "通过验证以确保正常访问",
+)
 
 SCHEMA_SQL = """
 PRAGMA journal_mode = WAL;
@@ -66,6 +81,10 @@ CREATE TABLE IF NOT EXISTS auction_rounds (
     notice_text TEXT NOT NULL DEFAULT '',
     survey_text TEXT NOT NULL DEFAULT '',
     detail_fetched_at TEXT,
+    detail_attempts INTEGER NOT NULL DEFAULT 0,
+    detail_last_attempt_at TEXT,
+    refresh_attempts INTEGER NOT NULL DEFAULT 0,
+    refresh_last_attempt_at TEXT,
     raw_json TEXT NOT NULL DEFAULT '{}',
     first_seen_at TEXT NOT NULL,
     last_seen_at TEXT NOT NULL,
@@ -104,6 +123,18 @@ CREATE TABLE IF NOT EXISTS sync_runs (
     details_enriched INTEGER NOT NULL DEFAULT 0,
     ended_refreshed INTEGER NOT NULL DEFAULT 0,
     message TEXT NOT NULL DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS sync_checkpoints (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    provider TEXT NOT NULL,
+    region_name TEXT NOT NULL,
+    scope TEXT NOT NULL,
+    next_page INTEGER NOT NULL DEFAULT 1,
+    backfill_completed INTEGER NOT NULL DEFAULT 0,
+    last_status TEXT NOT NULL DEFAULT 'pending',
+    updated_at TEXT NOT NULL,
+    UNIQUE(provider, region_name, scope)
 );
 
 CREATE VIEW IF NOT EXISTS v_auction_full AS
@@ -188,16 +219,54 @@ def _calc_unit_price(price: float | None, area: float | None) -> float | None:
     return round(price / area, 2)
 
 
+def _has_captcha_notice(text: str | None) -> bool:
+    if not text:
+        return False
+    return any(marker in text for marker in _CAPTCHA_NOTICE_MARKERS)
+
+
+def _iter_chunks(items: Sequence[int], chunk_size: int = 500) -> list[list[int]]:
+    seq = list(items)
+    return [seq[i : i + chunk_size] for i in range(0, len(seq), chunk_size)]
+
+
+def escape_like(value: str) -> str:
+    """Escape SQLite LIKE wildcards (\\, %, _) for use with ESCAPE '\\'."""
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
 class AuctionDB:
-    def __init__(self, db_path: str | Path) -> None:
+    def __init__(self, db_path: str | Path, *, read_only: bool = False) -> None:
         self.db_path = Path(db_path)
+        self.read_only = read_only
+        if read_only:
+            if not self.db_path.exists():
+                raise FileNotFoundError(f"数据库文件不存在: {self.db_path}")
+            self.conn = sqlite3.connect(
+                f"{self.db_path.resolve().as_uri()}?mode=ro",
+                uri=True,
+                timeout=30.0,
+            )
+            self.conn.row_factory = sqlite3.Row
+            self.conn.execute("PRAGMA busy_timeout = 30000")
+            return
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self.conn = sqlite3.connect(str(self.db_path))
+        self.conn = sqlite3.connect(str(self.db_path), timeout=30.0)
         self.conn.row_factory = sqlite3.Row
+        self.conn.execute("PRAGMA busy_timeout = 30000")
         self.init_schema()
 
     def init_schema(self) -> None:
         self.conn.executescript(SCHEMA_SQL)
+        existing_cols = {
+            row["name"]
+            for row in self.conn.execute("PRAGMA table_info(auction_rounds)").fetchall()
+        }
+        for col_name, col_def in _AUCTION_ROUNDS_MIGRATIONS:
+            if col_name not in existing_cols:
+                self.conn.execute(
+                    f"ALTER TABLE auction_rounds ADD COLUMN {col_name} {col_def}"
+                )
         self.conn.commit()
 
     def close(self) -> None:
@@ -255,6 +324,13 @@ class AuctionDB:
 
         Returns (property_id, round_id, property_created).
         """
+        try:
+            return self._upsert_list_item_tx(item)
+        except Exception:
+            self.conn.rollback()
+            raise
+
+    def _upsert_list_item_tx(self, item: RawAuctionItem) -> tuple[int, int, bool]:
         ts = now_str()
         parsed = parse_property_info(
             item_id=item.item_id,
@@ -264,6 +340,7 @@ class AuctionDB:
             explicit_district=item.district,
             address=item.address,
             category_hint=item.category_hint,
+            purpose_hint=item.purpose_hint,
             explicit_area=item.area_sqm,
         )
 
@@ -497,6 +574,13 @@ class AuctionDB:
 
     def apply_detail(self, detail: RawAuctionDetail) -> bool:
         """Apply fetched detail & announcement data to existing round and its property."""
+        try:
+            return self._apply_detail_tx(detail)
+        except Exception:
+            self.conn.rollback()
+            raise
+
+    def _apply_detail_tx(self, detail: RawAuctionDetail) -> bool:
         row = self.conn.execute(
             """
             SELECT r.*, p.province, p.city, p.district, p.community_name,
@@ -567,6 +651,9 @@ class AuctionDB:
         )
 
         new_bid = detail.bid_count if detail.bid_count is not None else row["bid_count"]
+        new_stage = normalize_stage(detail.stage, title)
+        if new_stage == "未知":
+            new_stage = row["stage"]
         new_status = (
             normalize_status(detail.status, bid_count=new_bid)
             if detail.status
@@ -577,6 +664,16 @@ class AuctionDB:
 
         new_initial = detail.initial_price if detail.initial_price is not None else row["initial_price"]
         new_current = detail.current_price if detail.current_price is not None else row["current_price"]
+        if new_initial is not None:
+            if new_status == "upcoming":
+                new_current = new_initial
+            elif (
+                new_bid == 0
+                and new_current is not None
+                and new_current < new_initial
+                and new_stage != "变卖"
+            ):
+                new_current = new_initial
         new_consult = detail.consult_price if detail.consult_price is not None else row["consult_price"]
         new_deposit = detail.deposit_price if detail.deposit_price is not None else row["deposit_price"]
         new_apply = detail.apply_count if detail.apply_count is not None else row["apply_count"]
@@ -586,10 +683,19 @@ class AuctionDB:
         new_court = detail.court_name or row["court_name"]
         ref_price = new_current if new_current is not None else new_initial
 
+        notice_is_placeholder = (
+            bool(detail.notice_text)
+            and "加载中" in detail.notice_text
+            and len(detail.notice_text.strip()) < 80
+        )
+        effective_notice = "" if notice_is_placeholder else detail.notice_text
+        fetched_ts = None if notice_is_placeholder else ts
+
         self.conn.execute(
             """
             UPDATE auction_rounds
-            SET status = ?,
+            SET stage = ?,
+                status = ?,
                 initial_price = ?,
                 current_price = ?,
                 consult_price = ?,
@@ -604,11 +710,12 @@ class AuctionDB:
                 court_name = ?,
                 notice_text = CASE WHEN ? != '' THEN ? ELSE notice_text END,
                 survey_text = CASE WHEN ? != '' THEN ? ELSE survey_text END,
-                detail_fetched_at = ?,
+                detail_fetched_at = COALESCE(?, detail_fetched_at),
                 last_seen_at = ?
             WHERE id = ?
             """,
             (
+                new_stage,
                 new_status,
                 new_initial,
                 new_current,
@@ -622,11 +729,11 @@ class AuctionDB:
                 new_start,
                 new_end,
                 new_court,
-                detail.notice_text,
-                detail.notice_text,
+                effective_notice,
+                effective_notice,
                 detail.survey_text,
                 detail.survey_text,
-                ts,
+                fetched_ts,
                 ts,
                 row["id"],
             ),
@@ -684,35 +791,449 @@ class AuctionDB:
             (round_id, captured_at, status, current_price, bid_count, apply_count, watch_count),
         )
 
-    def list_rounds_needing_detail(self, platform: str, limit: int = 20) -> list[sqlite3.Row]:
-        """Return rounds whose detail & announcement have never been fetched yet."""
-        return self.conn.execute(
+    def get_round_statuses(self, platform: str, item_ids: Sequence[str]) -> dict[str, str]:
+        """Batch-fetch current status for (platform, item_id) pairs in a single SQL IN query."""
+        ids = list(dict.fromkeys(str(item_id) for item_id in item_ids if item_id))
+        if not ids:
+            return {}
+        placeholders = ",".join("?" for _ in ids)
+        rows = self.conn.execute(
+            f"""
+            SELECT item_id, status
+            FROM auction_rounds
+            WHERE platform = ?
+              AND item_id IN ({placeholders})
+            """,
+            [platform, *ids],
+        ).fetchall()
+        return {str(row["item_id"]): str(row["status"]) for row in rows}
+
+    def get_round_status(self, platform: str, item_id: str) -> str | None:
+        """Fetch current status for a single (platform, item_id), or None if not found."""
+        row = self.conn.execute(
             """
+            SELECT status
+            FROM auction_rounds
+            WHERE platform = ? AND item_id = ?
+            """,
+            (platform, item_id),
+        ).fetchone()
+        return str(row["status"]) if row is not None else None
+
+    def record_detail_attempt(self, platform: str, item_id: str) -> None:
+        """Record a failed detail-enrichment attempt for backoff tracking."""
+        self.conn.execute(
+            """
+            UPDATE auction_rounds
+            SET detail_attempts = detail_attempts + 1,
+                detail_last_attempt_at = ?
+            WHERE platform = ? AND item_id = ?
+            """,
+            (now_str(), platform, item_id),
+        )
+        self.conn.commit()
+
+    def record_refresh_attempt(self, platform: str, item_id: str) -> None:
+        """Record an ended-refresh attempt for backoff tracking."""
+        self.conn.execute(
+            """
+            UPDATE auction_rounds
+            SET refresh_attempts = refresh_attempts + 1,
+                refresh_last_attempt_at = ?
+            WHERE platform = ? AND item_id = ?
+            """,
+            (now_str(), platform, item_id),
+        )
+        self.conn.commit()
+
+    def _has_table(self, table_name: str) -> bool:
+        row = self.conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+            (table_name,),
+        ).fetchone()
+        return row is not None
+
+    def get_checkpoint(self, provider: str, region_name: str, scope: str) -> dict[str, Any] | None:
+        """Return saved sync checkpoint for (provider, region_name, scope), or None."""
+        if not self._has_table("sync_checkpoints"):
+            return None
+        row = self.conn.execute(
+            """
+            SELECT next_page, backfill_completed, last_status, updated_at
+            FROM sync_checkpoints
+            WHERE provider = ? AND region_name = ? AND scope = ?
+            """,
+            (provider, region_name, scope),
+        ).fetchone()
+        if row is None:
+            return None
+        return {
+            "next_page": int(row["next_page"]),
+            "backfill_completed": bool(row["backfill_completed"]),
+            "last_status": str(row["last_status"]),
+            "updated_at": str(row["updated_at"]),
+        }
+
+    def save_checkpoint(
+        self,
+        provider: str,
+        region_name: str,
+        scope: str,
+        *,
+        next_page: int,
+        backfill_completed: bool,
+        last_status: str,
+    ) -> None:
+        """Upsert sync checkpoint for resumable backfill & incremental switching."""
+        self.conn.execute(
+            """
+            INSERT INTO sync_checkpoints (
+                provider, region_name, scope, next_page, backfill_completed, last_status, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(provider, region_name, scope) DO UPDATE SET
+                next_page = excluded.next_page,
+                backfill_completed = excluded.backfill_completed,
+                last_status = excluded.last_status,
+                updated_at = excluded.updated_at
+            """,
+            (
+                provider,
+                region_name,
+                scope,
+                max(1, int(next_page)),
+                int(bool(backfill_completed)),
+                last_status,
+                now_str(),
+            ),
+        )
+        self.conn.commit()
+
+    def list_checkpoints(self) -> list[dict[str, Any]]:
+        """List all saved sync checkpoints."""
+        if not self._has_table("sync_checkpoints"):
+            return []
+        rows = self.conn.execute(
+            """
+            SELECT provider, region_name, scope, next_page, backfill_completed, last_status, updated_at
+            FROM sync_checkpoints
+            ORDER BY provider ASC, region_name ASC, scope ASC
+            """
+        ).fetchall()
+        return [
+            {
+                "provider": str(r["provider"]),
+                "region_name": str(r["region_name"]),
+                "scope": str(r["scope"]),
+                "next_page": int(r["next_page"]),
+                "backfill_completed": bool(r["backfill_completed"]),
+                "last_status": str(r["last_status"]),
+                "updated_at": str(r["updated_at"]),
+            }
+            for r in rows
+        ]
+
+    def reset_checkpoints(
+        self,
+        *,
+        provider: str | None = None,
+        region_name: str | None = None,
+    ) -> int:
+        """Delete saved checkpoints (optionally filtered by provider/region)."""
+        clauses: list[str] = []
+        params: list[Any] = []
+        if provider:
+            clauses.append("provider = ?")
+            params.append(provider)
+        if region_name:
+            clauses.append("region_name LIKE ? ESCAPE '\\'")
+            params.append(f"%{escape_like(region_name)}%")
+        where_sql = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        cur = self.conn.execute(f"DELETE FROM sync_checkpoints {where_sql}", params)
+        self.conn.commit()
+        return int(cur.rowcount or 0)
+
+    def list_rounds_needing_detail(
+        self,
+        platform: str,
+        limit: int = 20,
+        *,
+        allowed_property_types: Sequence[str] | None = None,
+        allowed_statuses: Sequence[str] | None = None,
+        min_date: str | None = None,
+        max_attempts: int | None = None,
+        cooldown_hours: int = 0,
+    ) -> list[sqlite3.Row]:
+        """Return rounds whose detail & announcement have never been fetched yet."""
+        clauses: list[str] = [
+            "r.platform = ?",
+            "r.detail_fetched_at IS NULL",
+        ]
+        params: list[Any] = [platform]
+
+        types = tuple(t for t in (allowed_property_types or ()) if t)
+        if types:
+            placeholders = ",".join("?" for _ in types)
+            clauses.append(f"p.property_type IN ({placeholders})")
+            params.extend(types)
+
+        statuses = tuple(s for s in (allowed_statuses or ()) if s)
+        if statuses:
+            placeholders = ",".join("?" for _ in statuses)
+            clauses.append(f"r.status IN ({placeholders})")
+            params.extend(statuses)
+
+        if min_date:
+            clauses.append(
+                "(r.status IN ('upcoming', 'ongoing') OR COALESCE(r.end_time, r.start_time) IS NULL "
+                "OR COALESCE(r.end_time, r.start_time) >= ?)"
+            )
+            params.append(min_date)
+
+        if max_attempts is not None and max_attempts > 0:
+            clauses.append("r.detail_attempts < ?")
+            params.append(max_attempts)
+
+        if cooldown_hours > 0:
+            cutoff = (datetime.now(CN_TZ) - timedelta(hours=cooldown_hours)).strftime(
+                "%Y-%m-%d %H:%M:%S"
+            )
+            clauses.append("(r.detail_last_attempt_at IS NULL OR r.detail_last_attempt_at <= ?)")
+            params.append(cutoff)
+
+        where_sql = "\n              AND ".join(clauses)
+        params.append(limit)
+        return self.conn.execute(
+            f"""
             SELECT r.id, r.platform, r.item_id, r.url, r.title, p.city
             FROM auction_rounds r
             JOIN properties p ON p.id = r.property_id
-            WHERE r.platform = ?
-              AND r.detail_fetched_at IS NULL
+            WHERE {where_sql}
             ORDER BY
               CASE r.status WHEN 'ongoing' THEN 0 WHEN 'upcoming' THEN 1 ELSE 2 END,
               r.first_seen_at DESC
             LIMIT ?
             """,
-            (platform, limit),
+            params,
         ).fetchall()
 
-    def list_rounds_needing_ended_refresh(self, platform: str, limit: int = 20) -> list[sqlite3.Row]:
+    def list_rounds_needing_ended_refresh(
+        self,
+        platform: str,
+        limit: int = 20,
+        *,
+        allowed_property_types: Sequence[str] | None = None,
+        min_end_time: str | None = None,
+        max_attempts: int | None = None,
+        cooldown_hours: int = 0,
+    ) -> list[sqlite3.Row]:
         """Return rounds whose end_time has passed but status is still non-terminal."""
+        clauses: list[str] = [
+            "r.platform = ?",
+            "r.status IN ('upcoming', 'ongoing', 'ended', 'unknown')",
+            "r.end_time IS NOT NULL",
+            "r.end_time <= ?",
+        ]
+        params: list[Any] = [platform, now_str()]
+
+        types = tuple(t for t in (allowed_property_types or ()) if t)
+        if types:
+            placeholders = ",".join("?" for _ in types)
+            clauses.append(f"p.property_type IN ({placeholders})")
+            params.extend(types)
+
+        if min_end_time:
+            clauses.append("r.end_time >= ?")
+            params.append(min_end_time)
+
+        if max_attempts is not None and max_attempts > 0:
+            clauses.append("r.refresh_attempts < ?")
+            params.append(max_attempts)
+
+        if cooldown_hours > 0:
+            cutoff = (datetime.now(CN_TZ) - timedelta(hours=cooldown_hours)).strftime(
+                "%Y-%m-%d %H:%M:%S"
+            )
+            clauses.append("(r.refresh_last_attempt_at IS NULL OR r.refresh_last_attempt_at <= ?)")
+            params.append(cutoff)
+
+        where_sql = "\n              AND ".join(clauses)
+        params.append(limit)
         return self.conn.execute(
-            """
+            f"""
             SELECT r.id, r.platform, r.item_id, r.url, r.title, r.end_time
             FROM auction_rounds r
-            WHERE r.platform = ?
-              AND r.status IN ('upcoming', 'ongoing', 'ended', 'unknown')
-              AND r.end_time IS NOT NULL
-              AND r.end_time <= ?
+            JOIN properties p ON p.id = r.property_id
+            WHERE {where_sql}
             ORDER BY r.end_time DESC
             LIMIT ?
             """,
-            (platform, now_str(), limit),
+            params,
         ).fetchall()
+
+    @staticmethod
+    def _classify_round_property_type(row: sqlite3.Row) -> str:
+        """Re-evaluate property type using latest classifier while preserving detail-verified non-residential rows."""
+        stored = str(row["property_type"] or "other")
+        if row["detail_fetched_at"] and stored != "residential":
+            return stored
+
+        raw_obj: dict[str, Any] = {}
+        try:
+            parsed_raw = json.loads(row["raw_json"] or "{}")
+            if isinstance(parsed_raw, dict):
+                raw_obj = parsed_raw
+        except (ValueError, TypeError):
+            raw_obj = {}
+
+        data = raw_obj.get("data") if isinstance(raw_obj.get("data"), dict) else raw_obj
+        ha = data.get("houseAttributes") if isinstance(data.get("houseAttributes"), dict) else {}
+        purpose_hint = str(ha.get("housePurpose") or data.get("housePurpose") or "").strip()
+        cat_hint = str(data.get("category") or data.get("categoryId") or "").strip()
+        if not cat_hint and stored == "residential":
+            platform = str(row["platform"] or "")
+            if platform == "jd":
+                cat_hint = "12728"
+            elif platform == "taobao":
+                cat_hint = "50025969"
+            else:
+                cat_hint = "住宅用房"
+
+        notice_text = str(row["notice_text"] or "")
+        if _has_captcha_notice(notice_text):
+            notice_text = ""
+        detail_text = f"{row['address'] or ''}\n{notice_text}\n{row['survey_text'] or ''}".strip()
+
+        reclass = classify_property_type(
+            str(row["title"] or ""),
+            detail_text=detail_text,
+            category_hint=cat_hint,
+            purpose_hint=purpose_hint,
+        )
+        if stored != "residential" and reclass == "residential":
+            if "住宅" in purpose_hint or stored == "industrial":
+                return reclass
+            return stored
+        return reclass
+
+    def cleanup_stale_data(
+        self,
+        *,
+        min_date: str | None = None,
+        allowed_property_types: Sequence[str] | None = None,
+        reset_captcha_details: bool = True,
+        dry_run: bool = True,
+    ) -> dict[str, Any]:
+        """Preview or clean up expired rounds, non-target property types, captcha pollution, and revocation status."""
+        allowed_types = {
+            str(t).strip().lower() for t in (allowed_property_types or ()) if str(t).strip()
+        }
+
+        rows = self.conn.execute(
+            """
+            SELECT r.id, r.property_id, r.platform, r.title, r.status,
+                   r.start_time, r.end_time, r.notice_text, r.survey_text,
+                   r.detail_fetched_at, r.raw_json,
+                   p.property_type, p.address
+            FROM auction_rounds r
+            JOIN properties p ON p.id = r.property_id
+            """
+        ).fetchall()
+
+        expired_ids: set[int] = set()
+        non_target_ids: set[int] = set()
+
+        for row in rows:
+            rid = int(row["id"])
+            if min_date:
+                ref_dt = row["end_time"] or row["start_time"]
+                if (
+                    row["status"] not in ("upcoming", "ongoing")
+                    and ref_dt is not None
+                    and ref_dt < min_date
+                ):
+                    expired_ids.add(rid)
+
+            if allowed_types:
+                eff_type = self._classify_round_property_type(row)
+                if eff_type not in allowed_types:
+                    non_target_ids.add(rid)
+
+        delete_ids = expired_ids | non_target_ids
+
+        all_prop_ids = {
+            int(r["id"]) for r in self.conn.execute("SELECT id FROM properties").fetchall()
+        }
+        kept_prop_ids = {
+            int(row["property_id"]) for row in rows if int(row["id"]) not in delete_ids
+        }
+        orphan_prop_ids = all_prop_ids - kept_prop_ids
+
+        captcha_reset_ids: set[int] = set()
+        revocation_fix_ids: set[int] = set()
+
+        for row in rows:
+            rid = int(row["id"])
+            if rid in delete_ids:
+                continue
+            if reset_captcha_details and _has_captcha_notice(row["notice_text"]):
+                captcha_reset_ids.add(rid)
+            if row["status"] == "unknown" and '"revocation"' in str(row["raw_json"] or "").lower():
+                revocation_fix_ids.add(rid)
+
+        if not dry_run:
+            try:
+                for chunk in _iter_chunks(sorted(delete_ids)):
+                    placeholders = ",".join("?" for _ in chunk)
+                    self.conn.execute(
+                        f"DELETE FROM auction_rounds WHERE id IN ({placeholders})",
+                        chunk,
+                    )
+
+                for chunk in _iter_chunks(sorted(orphan_prop_ids)):
+                    placeholders = ",".join("?" for _ in chunk)
+                    self.conn.execute(
+                        f"DELETE FROM properties WHERE id IN ({placeholders})",
+                        chunk,
+                    )
+
+                if reset_captcha_details:
+                    for chunk in _iter_chunks(sorted(captcha_reset_ids)):
+                        placeholders = ",".join("?" for _ in chunk)
+                        self.conn.execute(
+                            f"""
+                            UPDATE auction_rounds
+                            SET detail_fetched_at = NULL,
+                                notice_text = '',
+                                survey_text = '',
+                                detail_attempts = 0,
+                                detail_last_attempt_at = NULL
+                            WHERE id IN ({placeholders})
+                            """,
+                            chunk,
+                        )
+
+                for chunk in _iter_chunks(sorted(revocation_fix_ids)):
+                    placeholders = ",".join("?" for _ in chunk)
+                    self.conn.execute(
+                        f"""
+                        UPDATE auction_rounds
+                        SET status = 'withdrawn'
+                        WHERE id IN ({placeholders})
+                        """,
+                        chunk,
+                    )
+
+                self.conn.commit()
+            except Exception:
+                self.conn.rollback()
+                raise
+
+        return {
+            "expired_rounds": len(expired_ids),
+            "non_target_type_rounds": len(non_target_ids),
+            "total_delete_rounds": len(delete_ids),
+            "orphan_properties": len(orphan_prop_ids),
+            "captcha_reset_rounds": len(captcha_reset_ids),
+            "revocation_fixed_rounds": len(revocation_fix_ids),
+            "dry_run": dry_run,
+        }

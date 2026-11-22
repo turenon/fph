@@ -4,21 +4,35 @@ import csv
 import io
 import json
 import logging
+import os
+import random
+import subprocess
+import sys
 import threading
+import time
+import uuid
 import webbrowser
+from collections import deque
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from urllib.parse import parse_qs, urlsplit
 
 from fph.analytics import find_bargain_candidates, get_market_summary
 from fph.config import AppConfig
-from fph.db import AuctionDB
+from fph.db import AuctionDB, escape_like, now_str
+from fph.pipeline import build_provider, build_providers, resolve_region_provider_name
+from fph.providers.base import AuctionProvider, AuthRequiredError, ProviderError
 
 logger = logging.getLogger(__name__)
 
 _UI_HTML_PATH = Path(__file__).with_name("web_ui.html")
+MAX_BATCH_ENRICH_SIZE = 30
+_BROWSER_CONSOLE_ACTIONS = {"sync", "enrich", "schedule"}
+_ALLOWED_CONSOLE_ACTIONS = {"sync", "enrich", "doctor", "cleanup", "schedule"}
+_ALLOWED_CLI_PROVIDERS = {"taobao", "jd", "taobao_ego", "jd_ego"}
+_AUTH_LOG_HINTS = ("auth_required", "滑块", "需要登录", "人机验证", "安全验证")
 
 _SORT_SQL_MAP: dict[str, str] = {
     "end_time_desc": "COALESCE(end_time, start_time, last_seen_at) DESC, round_id DESC",
@@ -170,6 +184,7 @@ def _query_items(db: AuctionDB, params: dict[str, list[str]]) -> dict[str, Any]:
     property_type = _first_param(params, "property_type", "all")
     status = _first_param(params, "status", "all")
     stage = _first_param(params, "stage", "all")
+    exclude_stage = _first_param(params, "exclude_stage")
     risk_level = _first_param(params, "risk_level", "all")
     only_full_share = _parse_bool(_first_param(params, "only_full_share"))
     only_enriched = _parse_bool(_first_param(params, "only_enriched"))
@@ -182,20 +197,21 @@ def _query_items(db: AuctionDB, params: dict[str, list[str]]) -> dict[str, Any]:
     sql_params: list[Any] = []
 
     if q:
-        like_q = f"%{q}%"
+        like_q = f"%{escape_like(q)}%"
         where_clauses.append(
-            "(title LIKE ? OR address LIKE ? OR community_name LIKE ? OR court_name LIKE ? OR item_id LIKE ?)"
+            "(title LIKE ? ESCAPE '\\' OR address LIKE ? ESCAPE '\\' OR community_name LIKE ? ESCAPE '\\' "
+            "OR court_name LIKE ? ESCAPE '\\' OR item_id LIKE ? ESCAPE '\\')"
         )
         sql_params.extend([like_q, like_q, like_q, like_q, like_q])
     if platform and platform != "all":
         where_clauses.append("platform = ?")
         sql_params.append(platform)
     if city:
-        where_clauses.append("city LIKE ?")
-        sql_params.append(f"%{city.replace('市', '')}%")
+        where_clauses.append("city LIKE ? ESCAPE '\\'")
+        sql_params.append(f"%{escape_like(city.replace('市', ''))}%")
     if district:
-        where_clauses.append("district LIKE ?")
-        sql_params.append(f"%{district}%")
+        where_clauses.append("district LIKE ? ESCAPE '\\'")
+        sql_params.append(f"%{escape_like(district)}%")
     if property_type and property_type != "all":
         where_clauses.append("property_type = ?")
         sql_params.append(property_type)
@@ -206,8 +222,20 @@ def _query_items(db: AuctionDB, params: dict[str, list[str]]) -> dict[str, Any]:
             where_clauses.append("status = ?")
             sql_params.append(status)
     if stage and stage != "all":
-        where_clauses.append("stage = ?")
-        sql_params.append(stage)
+        stage_vals = [s.strip() for s in stage.split(",") if s.strip()]
+        if len(stage_vals) == 1:
+            where_clauses.append("stage = ?")
+            sql_params.append(stage_vals[0])
+        elif stage_vals:
+            placeholders = ",".join("?" for _ in stage_vals)
+            where_clauses.append(f"stage IN ({placeholders})")
+            sql_params.extend(stage_vals)
+    if exclude_stage:
+        ex_vals = [s.strip() for s in exclude_stage.split(",") if s.strip()]
+        if ex_vals:
+            placeholders = ",".join("?" for _ in ex_vals)
+            where_clauses.append(f"stage NOT IN ({placeholders})")
+            sql_params.extend(ex_vals)
     if risk_level and risk_level != "all":
         where_clauses.append("risk_level = ?")
         sql_params.append(risk_level)
@@ -335,8 +363,8 @@ def _build_export_payload(
     where_sql = ""
     params: list[Any] = []
     if city:
-        where_sql = "WHERE city LIKE ?"
-        params.append(f"%{city.replace('市', '')}%")
+        where_sql = "WHERE city LIKE ? ESCAPE '\\'"
+        params.append(f"%{escape_like(city.replace('市', ''))}%")
 
     sql = f"SELECT * FROM {_DATASET_VIEW_MAP[dataset]} {where_sql} ORDER BY COALESCE(end_time, last_seen_at) DESC"
     rows = [dict(r) for r in db.conn.execute(sql, params).fetchall()]
@@ -356,12 +384,561 @@ def _build_export_payload(
     return body, "text/csv; charset=utf-8", filename
 
 
+class JobConflictError(RuntimeError):
+    """Raised when attempting to start a batch enrich job while another is active."""
+
+
+class EnrichJobManager:
+    """Single-worker background queue for batch detail enrichment from the Web UI."""
+
+    def __init__(
+        self,
+        config: AppConfig,
+        *,
+        provider_factory: Callable[[AppConfig], dict[str, AuctionProvider]] | None = None,
+        sleep_fn: Callable[[float], None] = time.sleep,
+        is_console_busy_cb: Callable[[], bool] | None = None,
+        browser_lock: threading.Lock | None = None,
+    ) -> None:
+        self._config = config
+        self._provider_factory = provider_factory or build_providers
+        self._sleep = sleep_fn
+        self._is_console_busy_cb = is_console_busy_cb
+        self._browser_lock = browser_lock or threading.Lock()
+        self._cond = threading.Condition()
+        self._job: dict[str, Any] = {
+            "job_id": "",
+            "status": "idle",  # idle / running / auth_required / completed / cancelled / error
+            "total": 0,
+            "processed": 0,
+            "succeeded": 0,
+            "skipped": 0,
+            "failed": 0,
+            "force": False,
+            "current_round_id": None,
+            "current_item_id": "",
+            "current_title": "",
+            "auth_message": "",
+            "auth_url": "",
+            "task_space": config.provider.task_space,
+            "started_at": "",
+            "finished_at": "",
+            "errors": [],
+        }
+        self._pending: list[dict[str, Any]] = []
+
+    def _snapshot_locked(self) -> dict[str, Any]:
+        snap = dict(self._job)
+        snap["errors"] = list(self._job["errors"])
+        snap["remaining"] = len(self._pending)
+        return snap
+
+    def status(self) -> dict[str, Any]:
+        with self._cond:
+            return self._snapshot_locked()
+
+    def start(self, round_ids: list[int], *, force: bool = False) -> dict[str, Any]:
+        deduped: list[int] = []
+        for raw_id in round_ids:
+            try:
+                rid = int(raw_id)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"无效的 round_id: {raw_id}") from exc
+            if rid <= 0:
+                raise ValueError(f"无效的 round_id: {raw_id}")
+            if rid not in deduped:
+                deduped.append(rid)
+
+        if not deduped:
+            raise ValueError("请至少选择 1 条标的记录")
+        if len(deduped) > MAX_BATCH_ENRICH_SIZE:
+            raise ValueError(f"单次最多批量采集 {MAX_BATCH_ENRICH_SIZE} 条（当前选择 {len(deduped)} 条）")
+
+        with AuctionDB(self._config.storage.db_path) as db:
+            placeholders = ",".join("?" for _ in deduped)
+            rows = db.conn.execute(
+                f"""
+                SELECT id AS round_id, platform, item_id, url, title, detail_fetched_at
+                FROM auction_rounds
+                WHERE id IN ({placeholders})
+                """,
+                deduped,
+            ).fetchall()
+
+        by_id = {int(r["round_id"]): dict(r) for r in rows}
+        pending: list[dict[str, Any]] = []
+        skipped = 0
+        for rid in deduped:
+            rec = by_id.get(rid)
+            if rec is None:
+                skipped += 1
+                continue
+            if not force and rec.get("detail_fetched_at"):
+                skipped += 1
+                continue
+            pending.append(rec)
+
+        with self._browser_lock:
+            with self._cond:
+                if self._job["status"] in {"running", "auth_required"}:
+                    raise JobConflictError("已有进行中或等待验证的采集任务，请先完成或终止后再发起新任务")
+                if self._is_console_busy_cb and self._is_console_busy_cb():
+                    raise JobConflictError("「任务控制台」正在运行浏览器采集任务，请先等待完成或停止后再发起批量采集")
+
+                now = now_str()
+                job_id = uuid.uuid4().hex[:10]
+                self._pending = pending
+                self._job = {
+                    "job_id": job_id,
+                    "status": "running" if pending else "completed",
+                    "total": len(deduped),
+                    "processed": skipped,
+                    "succeeded": 0,
+                    "skipped": skipped,
+                    "failed": 0,
+                    "force": bool(force),
+                    "current_round_id": None,
+                    "current_item_id": "",
+                    "current_title": "",
+                    "auth_message": "",
+                    "auth_url": "",
+                    "task_space": self._config.provider.task_space,
+                    "started_at": now,
+                    "finished_at": "" if pending else now,
+                    "errors": [],
+                }
+                if pending:
+                    worker = threading.Thread(target=self._run_job, args=(job_id,), daemon=True)
+                    worker.start()
+                return self._snapshot_locked()
+
+    def resume(self) -> dict[str, Any]:
+        with self._cond:
+            if self._job["status"] != "auth_required":
+                raise ValueError("当前没有处于等待验证状态的采集任务")
+            self._job["status"] = "running"
+            self._job["auth_message"] = ""
+            self._job["auth_url"] = ""
+            self._cond.notify_all()
+            return self._snapshot_locked()
+
+    def cancel(self) -> dict[str, Any]:
+        with self._cond:
+            if self._job["status"] in {"running", "auth_required"}:
+                self._job["status"] = "cancelled"
+                self._job["auth_message"] = ""
+                self._job["auth_url"] = ""
+                self._job["current_round_id"] = None
+                self._job["current_item_id"] = ""
+                self._job["current_title"] = ""
+                self._job["finished_at"] = now_str()
+                self._pending.clear()
+                self._cond.notify_all()
+            return self._snapshot_locked()
+
+    def _run_job(self, job_id: str) -> None:
+        try:
+            providers = self._provider_factory(self._config)
+        except Exception as exc:
+            logger.exception("初始化采集驱动失败")
+            with self._cond:
+                if self._job["job_id"] == job_id:
+                    self._job["status"] = "error"
+                    self._job["errors"].append(f"初始化采集驱动失败: {exc}")
+                    self._job["finished_at"] = now_str()
+                    self._pending.clear()
+            return
+
+        requests_made = 0
+        while True:
+            with self._cond:
+                if self._job["job_id"] != job_id or self._job["status"] == "cancelled":
+                    return
+                if not self._pending:
+                    self._job["status"] = "completed"
+                    self._job["current_round_id"] = None
+                    self._job["current_item_id"] = ""
+                    self._job["current_title"] = ""
+                    self._job["finished_at"] = now_str()
+                    return
+                item = self._pending[0]
+                self._job["current_round_id"] = item["round_id"]
+                self._job["current_item_id"] = item["item_id"]
+                self._job["current_title"] = item["title"]
+
+            if requests_made > 0:
+                lo = max(0.0, self._config.provider.min_delay_seconds)
+                hi = max(lo, self._config.provider.max_delay_seconds)
+                if hi > 0:
+                    self._sleep(random.uniform(lo, hi))
+                with self._cond:
+                    if self._job["job_id"] != job_id or self._job["status"] == "cancelled":
+                        return
+
+            platform_name = str(item["platform"])
+            prov = providers.get(platform_name)
+            if prov is None:
+                for p in providers.values():
+                    if p.platform == platform_name:
+                        prov = p
+                        break
+            if prov is None:
+                try:
+                    prov = build_provider(self._config, platform_name)
+                    providers[platform_name] = prov
+                except Exception as exc:
+                    with self._cond:
+                        if self._job["job_id"] == job_id and self._pending and self._pending[0]["round_id"] == item["round_id"]:
+                            self._pending.pop(0)
+                            self._job["failed"] += 1
+                            self._job["processed"] += 1
+                            if len(self._job["errors"]) < 20:
+                                self._job["errors"].append(f"{item['item_id']}: {exc}")
+                    continue
+
+            requests_made += 1
+            try:
+                detail = prov.fetch_detail(item["item_id"], item["url"])
+                with AuctionDB(self._config.storage.db_path) as db:
+                    db.apply_detail(detail)
+                with self._cond:
+                    if self._job["job_id"] == job_id and self._pending and self._pending[0]["round_id"] == item["round_id"]:
+                        self._pending.pop(0)
+                        self._job["succeeded"] += 1
+                        self._job["processed"] += 1
+            except AuthRequiredError as exc:
+                with self._cond:
+                    if self._job["job_id"] != job_id or self._job["status"] == "cancelled":
+                        return
+                    self._job["status"] = "auth_required"
+                    self._job["auth_message"] = str(exc)
+                    self._job["auth_url"] = exc.url
+                    self._job["task_space"] = exc.task_space or self._config.provider.task_space
+                    while self._job["job_id"] == job_id and self._job["status"] == "auth_required":
+                        self._cond.wait(timeout=1.0)
+                    if self._job["job_id"] != job_id or self._job["status"] == "cancelled":
+                        return
+            except ProviderError as exc:
+                logger.warning("Web 批量补抓详情失败 platform=%s item_id=%s: %s", platform_name, item["item_id"], exc)
+                try:
+                    with AuctionDB(self._config.storage.db_path) as db:
+                        db.record_detail_attempt(platform_name, item["item_id"])
+                except Exception:
+                    pass
+                with self._cond:
+                    if self._job["job_id"] == job_id and self._pending and self._pending[0]["round_id"] == item["round_id"]:
+                        self._pending.pop(0)
+                        self._job["failed"] += 1
+                        self._job["processed"] += 1
+                        if len(self._job["errors"]) < 20:
+                            self._job["errors"].append(f"{item['item_id']}: {exc}")
+            except Exception as exc:
+                logger.exception("Web 批量补抓详情发生未预期异常 platform=%s item_id=%s", platform_name, item["item_id"])
+                with self._cond:
+                    if self._job["job_id"] == job_id and self._pending and self._pending[0]["round_id"] == item["round_id"]:
+                        self._pending.pop(0)
+                        self._job["failed"] += 1
+                        self._job["processed"] += 1
+                        if len(self._job["errors"]) < 20:
+                            self._job["errors"].append(f"{item['item_id']}: {exc}")
+
+
+def _default_process_factory(cmd: list[str], env: dict[str, str]) -> subprocess.Popen[str]:
+    return subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        bufsize=1,
+        env=env,
+    )
+
+
+class CliJobManager:
+    """Single-worker subprocess manager for running allowlisted fph CLI actions from the Web Console."""
+
+    def __init__(
+        self,
+        config: AppConfig,
+        *,
+        process_factory: Callable[[list[str], dict[str, str]], Any] | None = None,
+        is_browser_busy_cb: Callable[[], bool] | None = None,
+        browser_lock: threading.Lock | None = None,
+    ) -> None:
+        self._config = config
+        self._process_factory = process_factory or _default_process_factory
+        self._is_browser_busy_cb = is_browser_busy_cb
+        self._browser_lock = browser_lock or threading.Lock()
+        self._lock = threading.Lock()
+        self._logs: deque[dict[str, Any]] = deque(maxlen=1000)
+        self._next_seq = 1
+        self._proc: Any = None
+        self._stop_requested = False
+        self._last_spec: tuple[str, dict[str, Any]] | None = None
+        self._job: dict[str, Any] = {
+            "job_id": "",
+            "action": "",
+            "status": "idle",  # idle / running / auth_required / succeeded / failed / stopped
+            "command_preview": "",
+            "exit_code": None,
+            "started_at": "",
+            "finished_at": "",
+            "needs_auth": False,
+        }
+
+    def is_browser_busy(self) -> bool:
+        with self._lock:
+            return self._job["status"] in {"running", "auth_required"} and self._job["action"] in _BROWSER_CONSOLE_ACTIONS
+
+    def _parse_optional_int(self, params: dict[str, Any], key: str, *, minimum: int, maximum: int | None = None) -> int | None:
+        raw = params.get(key)
+        if raw is None or raw == "":
+            return None
+        if isinstance(raw, bool):
+            raise ValueError(f"参数 {key} 必须是整数")
+        try:
+            val = int(raw)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"参数 {key} 必须是整数") from exc
+        if val < minimum:
+            raise ValueError(f"参数 {key} 必须 >= {minimum}")
+        if maximum is not None and val > maximum:
+            raise ValueError(f"参数 {key} 必须 <= {maximum}")
+        return val
+
+    def build_command(self, action: str, params: dict[str, Any] | None = None) -> tuple[list[str], str]:
+        act = (action or "").strip().lower()
+        if act not in _ALLOWED_CONSOLE_ACTIONS:
+            raise ValueError(f"不支持的控制动作: {action}（允许: {', '.join(sorted(_ALLOWED_CONSOLE_ACTIONS))}）")
+        p = params or {}
+        if not isinstance(p, dict):
+            raise ValueError("params 必须是 JSON 对象")
+
+        cmd: list[str] = [sys.executable, "-u", "-m", "fph.cli"]
+        if self._config.config_path is not None and self._config.config_path.exists():
+            cmd.extend(["-c", str(self._config.config_path)])
+
+        if act == "doctor":
+            cmd.append("doctor")
+        elif act == "sync":
+            cmd.extend(["sync", "--no-wait-auth"])
+            region = str(p.get("region") or "").strip()
+            if region:
+                cmd.extend(["--region", region])
+            provider = str(p.get("provider") or "").strip().lower()
+            if provider and provider != "all":
+                if provider not in _ALLOWED_CLI_PROVIDERS:
+                    raise ValueError(f"不支持的采集平台: {provider}")
+                cmd.extend(["--provider", provider])
+            max_pages = self._parse_optional_int(p, "max_pages", minimum=1, maximum=200)
+            if max_pages is not None:
+                cmd.extend(["--max-pages", str(max_pages)])
+            lookback_days = self._parse_optional_int(p, "lookback_days", minimum=0, maximum=3650)
+            if lookback_days is not None:
+                cmd.extend(["--lookback-days", str(lookback_days)])
+            if bool(p.get("active_only", False)):
+                cmd.append("--active-only")
+            if bool(p.get("no_enrich", False)):
+                cmd.append("--no-enrich")
+            if bool(p.get("no_refresh_ended", False)):
+                cmd.append("--no-refresh-ended")
+            if bool(p.get("reset_checkpoint", False)):
+                cmd.append("--reset-checkpoint")
+        elif act == "enrich":
+            cmd.extend(["enrich", "--no-wait-auth"])
+            provider = str(p.get("provider") or "").strip().lower()
+            if provider and provider != "all":
+                if provider not in _ALLOWED_CLI_PROVIDERS:
+                    raise ValueError(f"不支持的采集平台: {provider}")
+                cmd.extend(["--provider", provider])
+            limit = self._parse_optional_int(p, "limit", minimum=1, maximum=200)
+            if limit is not None:
+                cmd.extend(["--limit", str(limit)])
+            statuses = str(p.get("statuses") or "").strip()
+            if statuses:
+                cmd.extend(["--statuses", statuses])
+            lookback_days = self._parse_optional_int(p, "lookback_days", minimum=0, maximum=3650)
+            if lookback_days is not None:
+                cmd.extend(["--lookback-days", str(lookback_days)])
+        elif act == "cleanup":
+            cmd.append("cleanup")
+            if bool(p.get("dry_run", True)):
+                cmd.append("--dry-run")
+            lookback_days = self._parse_optional_int(p, "lookback_days", minimum=0, maximum=3650)
+            if lookback_days is not None:
+                cmd.extend(["--lookback-days", str(lookback_days)])
+            if bool(p.get("keep_non_residential", False)):
+                cmd.append("--keep-non-residential")
+            if bool(p.get("no_reset_captcha", False)):
+                cmd.append("--no-reset-captcha")
+        elif act == "schedule":
+            cmd.append("schedule")
+            interval = self._parse_optional_int(p, "interval", minimum=5, maximum=10080)
+            if interval is not None:
+                cmd.extend(["--interval", str(interval)])
+            if bool(p.get("delay_first", False)):
+                cmd.append("--delay-first")
+
+        preview_idx = cmd.index("fph.cli") + 1
+        preview = "fph " + " ".join(cmd[preview_idx:])
+        return cmd, preview
+
+    def _append_log_locked(self, text: str) -> None:
+        self._logs.append({"seq": self._next_seq, "text": text})
+        self._next_seq += 1
+
+    def _snapshot_locked(self, since: int = 0) -> dict[str, Any]:
+        lines = [item for item in self._logs if item["seq"] > since]
+        snap = dict(self._job)
+        snap["lines"] = lines
+        snap["next_cursor"] = self._next_seq - 1
+        return snap
+
+    def status(self, since: int = 0) -> dict[str, Any]:
+        with self._lock:
+            return self._snapshot_locked(since=since)
+
+    def start(self, action: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        cmd, preview = self.build_command(action, params)
+        act = (action or "").strip().lower()
+
+        with self._browser_lock:
+            with self._lock:
+                if self._job["status"] == "running":
+                    raise JobConflictError("控制台已有任务正在运行，请先等待完成或停止后再发起新任务")
+                if act in _BROWSER_CONSOLE_ACTIONS and self._is_browser_busy_cb and self._is_browser_busy_cb():
+                    raise JobConflictError("「批量勾选详情」正在使用浏览器，请先等待完成或终止后再执行")
+
+                env = os.environ.copy()
+                env["PYTHONUNBUFFERED"] = "1"
+                proc = self._process_factory(cmd, env)
+
+                job_id = uuid.uuid4().hex[:10]
+                self._proc = proc
+                self._stop_requested = False
+                self._logs.clear()
+                self._next_seq = 1
+                if act in {"sync", "enrich"}:
+                    self._last_spec = (act, dict(params or {}))
+                self._job = {
+                    "job_id": job_id,
+                    "action": act,
+                    "status": "running",
+                    "command_preview": preview,
+                    "exit_code": None,
+                    "started_at": now_str(),
+                    "finished_at": "",
+                    "needs_auth": False,
+                }
+                self._append_log_locked(f"$ {preview}")
+                reader = threading.Thread(target=self._read_loop, args=(job_id, proc), daemon=True)
+                reader.start()
+                return self._snapshot_locked(since=0)
+
+    def _read_loop(self, job_id: str, proc: Any) -> None:
+        saw_auth_hint = False
+        try:
+            stdout = getattr(proc, "stdout", None)
+            if stdout is not None:
+                for raw_line in iter(stdout.readline, ""):
+                    line = raw_line.rstrip("\r\n")
+                    if any(hint in line for hint in _AUTH_LOG_HINTS):
+                        saw_auth_hint = True
+                    with self._lock:
+                        if self._job["job_id"] != job_id:
+                            return
+                        self._append_log_locked(line)
+        except Exception as exc:
+            with self._lock:
+                if self._job["job_id"] == job_id:
+                    self._append_log_locked(f"[读取日志异常] {exc}")
+        finally:
+            try:
+                exit_code = proc.wait(timeout=5)
+            except Exception:
+                exit_code = -1
+
+            with self._lock:
+                if self._job["job_id"] == job_id:
+                    self._proc = None
+                    self._job["exit_code"] = exit_code
+                    self._job["finished_at"] = now_str()
+                    if self._stop_requested:
+                        self._job["status"] = "stopped"
+                        self._append_log_locked("[任务已停止]")
+                    elif exit_code == 0:
+                        self._job["status"] = "succeeded"
+                        self._append_log_locked("[任务执行完成，退出码 0]")
+                    elif exit_code == 2 and saw_auth_hint:
+                        self._job["status"] = "auth_required"
+                        self._job["needs_auth"] = True
+                        self._append_log_locked("[需要人机验证] 请在 ego(lite) 完成滑块或登录后，点击「已完成验证，继续执行」")
+                    else:
+                        self._job["status"] = "failed"
+                        self._append_log_locked(f"[任务结束，退出码 {exit_code}]")
+
+    def stop(self) -> dict[str, Any]:
+        with self._lock:
+            proc = self._proc
+            if proc is None or self._job["status"] != "running":
+                return self._snapshot_locked(since=0)
+            self._stop_requested = True
+            self._append_log_locked("[正在停止任务...]")
+        try:
+            proc.terminate()
+            proc.wait(timeout=2)
+        except Exception:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+        with self._lock:
+            return self._snapshot_locked(since=0)
+
+    def retry(self) -> dict[str, Any]:
+        with self._lock:
+            spec = self._last_spec
+        if spec is None:
+            raise ValueError("没有可继续执行的历史任务")
+        action, params = spec
+        retry_params = dict(params)
+        retry_params["reset_checkpoint"] = False
+        return self.start(action, retry_params)
+
+
 class _FphHTTPServer(ThreadingHTTPServer):
     allow_reuse_address = True
     daemon_threads = True
 
-    def __init__(self, server_address: tuple[str, int], handler_cls: type[BaseHTTPRequestHandler], config: AppConfig) -> None:
+    def __init__(
+        self,
+        server_address: tuple[str, int],
+        handler_cls: type[BaseHTTPRequestHandler],
+        config: AppConfig,
+        *,
+        provider_factory: Callable[[AppConfig], dict[str, AuctionProvider]] | None = None,
+        sleep_fn: Callable[[float], None] = time.sleep,
+        process_factory: Callable[[list[str], dict[str, str]], Any] | None = None,
+    ) -> None:
         self.app_config = config
+        self._browser_lock = threading.Lock()
+        self.cli_manager = CliJobManager(
+            config,
+            process_factory=process_factory,
+            browser_lock=self._browser_lock,
+        )
+        self.enrich_manager = EnrichJobManager(
+            config,
+            provider_factory=provider_factory,
+            sleep_fn=sleep_fn,
+            is_console_busy_cb=self.cli_manager.is_browser_busy,
+            browser_lock=self._browser_lock,
+        )
+        self.cli_manager._is_browser_busy_cb = lambda: (
+            self.enrich_manager.status().get("status") in {"running", "auth_required"}
+        )
         super().__init__(server_address, handler_cls)
 
 
@@ -455,6 +1032,7 @@ class _FphRequestHandler(BaseHTTPRequestHandler):
                 if max_risk not in {"low", "medium", "high"}:
                     raise ValueError(f"无效的 max_risk: {max_risk}（可选: low / medium / high）")
                 stage = _first_param(params, "stage") or None
+                exclude_stage = _first_param(params, "exclude_stage") or None
                 limit = _parse_int(_first_param(params, "limit"), 50, minimum=1, maximum=200)
                 with AuctionDB(self.server.app_config.storage.db_path) as db:
                     rows = find_bargain_candidates(
@@ -466,6 +1044,7 @@ class _FphRequestHandler(BaseHTTPRequestHandler):
                         min_area=min_area,
                         max_risk_level=max_risk,
                         stage=stage,
+                        exclude_stage=exclude_stage,
                         limit=limit,
                     )
                 self._send_json(HTTPStatus.OK, {"rows": rows})
@@ -475,6 +1054,39 @@ class _FphRequestHandler(BaseHTTPRequestHandler):
                 with AuctionDB(self.server.app_config.storage.db_path) as db:
                     rows = _query_sync_runs(db)
                 self._send_json(HTTPStatus.OK, {"rows": rows})
+                return
+
+            if path == "/api/enrich/status":
+                self._send_json(HTTPStatus.OK, self.server.enrich_manager.status())
+                return
+
+            if path == "/api/console/options":
+                cfg = self.server.app_config
+                regions = [
+                    {
+                        "name": r.name,
+                        "city": r.city,
+                        "provider": resolve_region_provider_name(cfg, r),
+                    }
+                    for r in cfg.regions
+                ]
+                self._send_json(
+                    HTTPStatus.OK,
+                    {
+                        "regions": regions,
+                        "defaults": {
+                            "lookback_days": cfg.provider.lookback_days,
+                            "max_pages_per_query": cfg.provider.max_pages_per_query,
+                            "max_detail_enrich_per_run": cfg.provider.max_detail_enrich_per_run,
+                            "schedule_interval_minutes": cfg.schedule.interval_minutes,
+                        },
+                    },
+                )
+                return
+
+            if path == "/api/console/status":
+                since = _parse_int(_first_param(params, "since"), 0, minimum=0)
+                self._send_json(HTTPStatus.OK, self.server.cli_manager.status(since=since))
                 return
 
             if path == "/api/export":
@@ -503,14 +1115,111 @@ class _FphRequestHandler(BaseHTTPRequestHandler):
             logger.exception("处理请求失败 path=%s", path)
             self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": f"服务端内部错误: {exc}"})
 
+    def _read_json_body(self) -> dict[str, Any]:
+        raw_len = self.headers.get("Content-Length", "0").strip()
+        try:
+            length = int(raw_len)
+        except ValueError as exc:
+            raise ValueError("无效的 Content-Length") from exc
+        if length <= 0:
+            return {}
+        if length > 1024 * 1024:
+            raise ValueError("请求体过大")
+        raw_bytes = self.rfile.read(length)
+        try:
+            data = json.loads(raw_bytes.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise ValueError(f"无效的 JSON 请求体: {exc}") from exc
+        if not isinstance(data, dict):
+            raise ValueError("JSON 请求体必须是对象")
+        return data
+
+    def _validate_post_request(self) -> None:
+        content_type = (self.headers.get("Content-Type") or "").split(";", 1)[0].strip().lower()
+        if content_type != "application/json":
+            raise PermissionError("POST 请求必须使用 Content-Type: application/json")
+        host = (self.headers.get("Host") or "").strip().lower()
+        origin = (self.headers.get("Origin") or "").strip()
+        if origin:
+            if origin == "null" or urlsplit(origin).netloc.lower() != host:
+                raise PermissionError("拒绝跨站 Origin 请求")
+            return
+        referer = (self.headers.get("Referer") or "").strip()
+        if referer and urlsplit(referer).netloc.lower() != host:
+            raise PermissionError("拒绝跨站 Referer 请求")
+
+    def do_POST(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler naming
+        path = urlsplit(self.path).path
+        try:
+            self._validate_post_request()
+            if path == "/api/enrich":
+                payload = self._read_json_body()
+                round_ids = payload.get("round_ids")
+                if not isinstance(round_ids, list):
+                    raise ValueError("round_ids 必须是整数数组")
+                force = bool(payload.get("force", False))
+                snap = self.server.enrich_manager.start(round_ids, force=force)
+                self._send_json(HTTPStatus.ACCEPTED, snap)
+                return
+
+            if path == "/api/enrich/resume":
+                snap = self.server.enrich_manager.resume()
+                self._send_json(HTTPStatus.OK, snap)
+                return
+
+            if path == "/api/enrich/cancel":
+                snap = self.server.enrich_manager.cancel()
+                self._send_json(HTTPStatus.OK, snap)
+                return
+
+            if path == "/api/console/run":
+                payload = self._read_json_body()
+                action = str(payload.get("action") or "")
+                run_params = payload.get("params") if "params" in payload else {}
+                snap = self.server.cli_manager.start(action, run_params)
+                self._send_json(HTTPStatus.ACCEPTED, snap)
+                return
+
+            if path == "/api/console/stop":
+                snap = self.server.cli_manager.stop()
+                self._send_json(HTTPStatus.OK, snap)
+                return
+
+            if path == "/api/console/retry":
+                snap = self.server.cli_manager.retry()
+                self._send_json(HTTPStatus.ACCEPTED, snap)
+                return
+
+            self._send_json(HTTPStatus.NOT_FOUND, {"error": f"未知路径: {path}"})
+        except PermissionError as exc:
+            self._send_json(HTTPStatus.FORBIDDEN, {"error": str(exc)})
+        except JobConflictError as exc:
+            self._send_json(HTTPStatus.CONFLICT, {"error": str(exc)})
+        except ValueError as exc:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+        except Exception as exc:  # pragma: no cover - defensive fallback
+            logger.exception("处理 POST 请求失败 path=%s", path)
+            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": f"服务端内部错误: {exc}"})
+
 
 def create_web_server(
     config: AppConfig,
     host: str = "127.0.0.1",
     port: int = 8765,
+    *,
+    provider_factory: Callable[[AppConfig], dict[str, AuctionProvider]] | None = None,
+    sleep_fn: Callable[[float], None] = time.sleep,
+    process_factory: Callable[[list[str], dict[str, str]], Any] | None = None,
 ) -> ThreadingHTTPServer:
     """Create a threaded local HTTP server serving the FPH data dashboard."""
-    return _FphHTTPServer((host, port), _FphRequestHandler, config)
+    return _FphHTTPServer(
+        (host, port),
+        _FphRequestHandler,
+        config,
+        provider_factory=provider_factory,
+        sleep_fn=sleep_fn,
+        process_factory=process_factory,
+    )
 
 
 def run_web_server(
@@ -546,4 +1255,6 @@ def run_web_server(
     except KeyboardInterrupt:
         print("\n收到中断信号，本地数据看板已关闭。")
     finally:
+        server.cli_manager.stop()
+        server.enrich_manager.cancel()
         server.server_close()

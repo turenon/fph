@@ -1,16 +1,20 @@
 from __future__ import annotations
 
+import io
 import json
 import tempfile
 import threading
+import time
 import unittest
 from pathlib import Path
 from urllib.error import HTTPError
-from urllib.request import urlopen
+from urllib.parse import quote
+from urllib.request import Request, urlopen
 
-from fph.config import AppConfig, StorageConfig
+from fph.config import AppConfig, RegionConfig, StorageConfig
 from fph.db import AuctionDB
 from fph.models import RawAuctionDetail, RawAuctionItem, SyncSummary
+from fph.providers.base import AuctionProvider, AuthRequiredError
 from fph.web import create_web_server
 
 
@@ -175,11 +179,29 @@ class WebDashboardTest(unittest.TestCase):
             self.assertEqual(resp.status, 200)
             return json.loads(resp.read().decode("utf-8"))
 
+    def _post_json(self, path: str, payload: dict) -> tuple[int, dict]:
+        req = Request(
+            f"{self.base_url}{path}",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urlopen(req, timeout=5) as resp:
+                return resp.status, json.loads(resp.read().decode("utf-8"))
+        except HTTPError as exc:
+            return exc.code, json.loads(exc.read().decode("utf-8"))
+
     def test_html_and_overview(self) -> None:
         with urlopen(f"{self.base_url}/", timeout=5) as resp:
             self.assertEqual(resp.status, 200)
             html = resp.read().decode("utf-8")
             self.assertIn("FPH 法拍房数据看板", html)
+            self.assertIn("filterExcludeSelloff", html)
+            self.assertIn("stageMulti", html)
+            self.assertIn("tab-console", html)
+            self.assertIn("btnQuickSync7d", html)
+            self.assertIn("consoleLogBox", html)
 
         overview = self._get_json("/api/overview")
         self.assertEqual(overview["counts"]["properties_total"], 4)
@@ -217,6 +239,15 @@ class WebDashboardTest(unittest.TestCase):
         self.assertEqual(active["total"], 1)
         self.assertEqual(active["items"][0]["item_id"], "w_202_r2")
 
+        multi_stage = self._get_json(f"/api/items?stage={quote('一拍,二拍')}")
+        self.assertEqual(multi_stage["total"], 5)
+
+        only_second = self._get_json(f"/api/items?stage={quote('二拍')}&exclude_stage={quote('一拍')}")
+        self.assertEqual(only_second["total"], 2)
+
+        no_first = self._get_json(f"/api/items?exclude_stage={quote('一拍')}")
+        self.assertEqual(no_first["total"], 2)
+
         detail = self._get_json(f"/api/items/{self.r2_id}")
         self.assertEqual(detail["item_id"], "w_101_r2")
         self.assertEqual(len(detail["related_rounds"]), 2)
@@ -249,6 +280,328 @@ class WebDashboardTest(unittest.TestCase):
             text = raw.decode("utf-8-sig")
             self.assertIn("w_101_r2", text)
             self.assertIn("w_303_comm", text)
+
+    def test_batch_enrich_skip_limit_auth_pause_resume_and_cancel(self) -> None:
+        class _BatchStubProvider(AuctionProvider):
+            platform = "taobao"
+
+            def __init__(self) -> None:
+                self.calls: list[str] = []
+                self.fail_auth_once = True
+
+            def check_ready(self) -> tuple[bool, str]:
+                return True, "ok"
+
+            def fetch_list_page(self, region, status_scope, page):  # pragma: no cover
+                raise NotImplementedError
+
+            def fetch_detail(self, item_id: str, url: str) -> RawAuctionDetail:
+                self.calls.append(item_id)
+                if item_id == "w_202_r2" and self.fail_auth_once:
+                    self.fail_auth_once = False
+                    raise AuthRequiredError("触发滑块验证", url=url, task_space="test-space")
+                return RawAuctionDetail(
+                    platform="taobao",
+                    item_id=item_id,
+                    url=url,
+                    notice_text="标的物建筑面积99.5平方米，已腾空。",
+                )
+
+        stub = _BatchStubProvider()
+        server = create_web_server(
+            AppConfig(storage=StorageConfig(db_path=self.db_path)),
+            host="127.0.0.1",
+            port=0,
+            provider_factory=lambda _cfg: {"taobao_ego": stub},
+            sleep_fn=lambda _: None,
+        )
+        port = server.server_address[1]
+        base = f"http://127.0.0.1:{port}"
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+
+        def _req(method: str, path: str, body: dict | None = None) -> tuple[int, dict]:
+            req = Request(
+                f"{base}{path}",
+                data=(json.dumps(body).encode("utf-8") if body is not None else None),
+                headers={"Content-Type": "application/json"} if body is not None else {},
+                method=method,
+            )
+            try:
+                with urlopen(req, timeout=5) as resp:
+                    return resp.status, json.loads(resp.read().decode("utf-8"))
+            except HTTPError as exc:
+                return exc.code, json.loads(exc.read().decode("utf-8"))
+
+        try:
+            # 1. Validation: empty or > 30 rejected
+            c_empty, _ = _req("POST", "/api/enrich", {"round_ids": []})
+            self.assertEqual(c_empty, 400)
+            c_over, _ = _req("POST", "/api/enrich", {"round_ids": list(range(1, 32))})
+            self.assertEqual(c_over, 400)
+
+            # Find round_id of w_202_r2 (unenriched) and self.r2_id (already enriched)
+            with AuctionDB(self.db_path) as db:
+                r_un = db.conn.execute(
+                    "SELECT id FROM auction_rounds WHERE item_id = 'w_202_r2'"
+                ).fetchone()[0]
+
+            # 2. Start batch with [r2_id (enriched), r_un (unenriched)] and force=False:
+            # r2_id is skipped, r_un hits AuthRequiredError and pauses
+            code, snap = _req("POST", "/api/enrich", {"round_ids": [self.r2_id, r_un], "force": False})
+            self.assertEqual(code, 202)
+            self.assertEqual(snap["skipped"], 1)
+
+            for _ in range(40):
+                _, st = _req("GET", "/api/enrich/status")
+                if st["status"] == "auth_required":
+                    break
+                time.sleep(0.05)
+            self.assertEqual(st["status"], "auth_required")
+            self.assertEqual(st["current_item_id"], "w_202_r2")
+
+            # Starting another job while paused returns 409 conflict
+            c_conf, _ = _req("POST", "/api/enrich", {"round_ids": [self.r2_id], "force": True})
+            self.assertEqual(c_conf, 409)
+
+            # 3. Resume -> retries w_202_r2 and completes
+            c_res, _ = _req("POST", "/api/enrich/resume", {})
+            self.assertEqual(c_res, 200)
+            for _ in range(40):
+                _, st = _req("GET", "/api/enrich/status")
+                if st["status"] == "completed":
+                    break
+                time.sleep(0.05)
+            self.assertEqual(st["status"], "completed")
+            self.assertEqual(st["succeeded"], 1)
+            self.assertEqual(st["skipped"], 1)
+            self.assertEqual(stub.calls, ["w_202_r2", "w_202_r2"])
+
+            # 4. Force re-enrich already-enriched item works
+            c_force, snap_f = _req("POST", "/api/enrich", {"round_ids": [self.r2_id], "force": True})
+            self.assertEqual(c_force, 202)
+            for _ in range(40):
+                _, st = _req("GET", "/api/enrich/status")
+                if st["status"] == "completed":
+                    break
+                time.sleep(0.05)
+            self.assertEqual(st["succeeded"], 1)
+            self.assertEqual(st["skipped"], 0)
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
+
+    def test_console_options_stream_logs_auth_retry_stop_and_mutex(self) -> None:
+        class _FakeProc:
+            def __init__(self, lines: list[str], exit_code: int, *, block_event: threading.Event | None = None) -> None:
+                self._lines = lines
+                self._exit_code = exit_code
+                self._block_event = block_event
+                self._terminated = False
+                self.stdout = self._iter_lines()
+
+            def _iter_lines(self) -> io.StringIO:
+                # Build an iterator-compatible wrapper using a pipe-like generator via StringIO when non-blocking,
+                # or a custom object with readline().
+                return io.StringIO("".join(f"{ln}\n" for ln in self._lines))
+
+            def wait(self, timeout: int | None = None) -> int:
+                if self._block_event is not None:
+                    self._block_event.wait(timeout=timeout or 5)
+                return -15 if self._terminated else self._exit_code
+
+            def terminate(self) -> None:
+                self._terminated = True
+                if self._block_event is not None:
+                    self._block_event.set()
+
+            def kill(self) -> None:
+                self.terminate()
+
+        class _BlockingProc:
+            def __init__(self) -> None:
+                self._ev = threading.Event()
+                self._terminated = False
+                self.stdout = self
+
+            def readline(self) -> str:
+                self._ev.wait(timeout=5)
+                return ""
+
+            def wait(self, timeout: int | None = None) -> int:
+                self._ev.wait(timeout=timeout or 5)
+                return -15 if self._terminated else 0
+
+            def terminate(self) -> None:
+                self._terminated = True
+                self._ev.set()
+
+            def kill(self) -> None:
+                self.terminate()
+
+        captured_cmds: list[list[str]] = []
+        mode = {"kind": "auth"}
+
+        def fake_process_factory(cmd: list[str], env: dict[str, str]):
+            captured_cmds.append(cmd)
+            self.assertEqual(env.get("PYTHONUNBUFFERED"), "1")
+            if mode["kind"] == "auth":
+                return _FakeProc(["[INFO] 采集开始", "[WARNING] 检测到滑块验证 auth_required"], 2)
+            if mode["kind"] == "ok":
+                return _FakeProc(["[INFO] 从断点续采完成", "[INFO] 新增 3 条"], 0)
+            return _BlockingProc()
+
+        cfg = AppConfig(
+            storage=StorageConfig(db_path=self.db_path),
+            regions=[RegionConfig(name="福州市-住宅", province="福建", city="福州", location_code="350100")],
+        )
+        server = create_web_server(
+            cfg,
+            host="127.0.0.1",
+            port=0,
+            process_factory=fake_process_factory,
+        )
+        port = server.server_address[1]
+        base = f"http://127.0.0.1:{port}"
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+
+        def _req(method: str, path: str, body: dict | None = None) -> tuple[int, dict]:
+            req = Request(
+                f"{base}{path}",
+                data=(json.dumps(body).encode("utf-8") if body is not None else None),
+                headers={"Content-Type": "application/json"} if body is not None else {},
+                method=method,
+            )
+            try:
+                with urlopen(req, timeout=5) as resp:
+                    return resp.status, json.loads(resp.read().decode("utf-8"))
+            except HTTPError as exc:
+                return exc.code, json.loads(exc.read().decode("utf-8"))
+
+        try:
+            # 1. Options endpoint
+            c_opt, opts = _req("GET", "/api/console/options")
+            self.assertEqual(c_opt, 200)
+            self.assertEqual(opts["regions"][0]["name"], "福州市-住宅")
+
+            # 2. Invalid action rejected (400)
+            c_bad, _ = _req("POST", "/api/console/run", {"action": "rm_rf"})
+            self.assertEqual(c_bad, 400)
+
+            # 3. Run sync with lookback_days=7 & reset_checkpoint=True -> hits auth_required
+            c_run, snap = _req(
+                "POST",
+                "/api/console/run",
+                {"action": "sync", "params": {"lookback_days": 7, "reset_checkpoint": True, "provider": "taobao"}},
+            )
+            self.assertEqual(c_run, 202)
+            self.assertIn("--lookback-days", captured_cmds[0])
+            self.assertIn("7", captured_cmds[0])
+            self.assertIn("--no-wait-auth", captured_cmds[0])
+
+            for _ in range(40):
+                _, st = _req("GET", "/api/console/status?since=0")
+                if st["status"] == "auth_required":
+                    break
+                time.sleep(0.05)
+            self.assertEqual(st["status"], "auth_required")
+            self.assertTrue(st["needs_auth"])
+            self.assertTrue(any("滑块验证" in ln["text"] for ln in st["lines"]))
+
+            # 4. Retry drops --reset-checkpoint and succeeds
+            mode["kind"] = "ok"
+            c_ret, _ = _req("POST", "/api/console/retry", {})
+            self.assertEqual(c_ret, 202)
+            self.assertNotIn("--reset-checkpoint", captured_cmds[1])
+            for _ in range(40):
+                _, st2 = _req("GET", "/api/console/status?since=0")
+                if st2["status"] == "succeeded":
+                    break
+                time.sleep(0.05)
+            self.assertEqual(st2["status"], "succeeded")
+
+            # 5. Running blocking sync blocks /api/enrich with 409 Conflict, and /api/console/stop terminates it
+            mode["kind"] = "block"
+            c_blk, _ = _req("POST", "/api/console/run", {"action": "sync", "params": {"active_only": True}})
+            self.assertEqual(c_blk, 202)
+            c_conf, _ = _req("POST", "/api/enrich", {"round_ids": [self.r2_id], "force": True})
+            self.assertEqual(c_conf, 409)
+
+            c_stop, _ = _req("POST", "/api/console/stop", {})
+            self.assertEqual(c_stop, 200)
+            for _ in range(40):
+                _, st3 = _req("GET", "/api/console/status?since=0")
+                if st3["status"] == "stopped":
+                    break
+                time.sleep(0.05)
+            self.assertEqual(st3["status"], "stopped")
+        finally:
+            server.cli_manager.stop()
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
+
+    def test_post_csrf_guards_and_enrich_unexpected_exception_recovery(self) -> None:
+        class _ExplodingProvider:
+            platform = "taobao"
+
+            def fetch_detail(self, item_id: str, url: str):
+                raise RuntimeError("unexpected boom")
+
+        cfg = AppConfig(
+            storage=StorageConfig(db_path=self.db_path),
+            regions=[RegionConfig(name="福州市-住宅", province="福建", city="福州", location_code="350100")],
+        )
+        server = create_web_server(
+            cfg,
+            host="127.0.0.1",
+            port=0,
+            provider_factory=lambda _c: {"taobao": _ExplodingProvider()},
+            sleep_fn=lambda _s: None,
+        )
+        port = server.server_address[1]
+        base = f"http://127.0.0.1:{port}"
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            # 1. Cross-site Origin and non-JSON Content-Type rejected with 403
+            for hdrs in [
+                {"Content-Type": "text/plain"},
+                {"Content-Type": "application/json", "Origin": "https://evil.example"},
+            ]:
+                req = Request(f"{base}/api/console/stop", data=b"{}", headers=hdrs, method="POST")
+                with self.assertRaises(HTTPError) as ctx:
+                    urlopen(req, timeout=5)
+                self.assertEqual(ctx.exception.code, 403)
+                ctx.exception.close()
+
+            # 2. Unexpected exception in EnrichJobManager does not leave status stuck in 'running'
+            req_ok = Request(
+                f"{base}/api/enrich",
+                data=json.dumps({"round_ids": [self.r2_id], "force": True}).encode("utf-8"),
+                headers={"Content-Type": "application/json", "Origin": base},
+                method="POST",
+            )
+            with urlopen(req_ok, timeout=5) as resp:
+                self.assertEqual(resp.status, 202)
+            final_snap = None
+            for _ in range(40):
+                with urlopen(f"{base}/api/enrich/status", timeout=5) as resp:
+                    final_snap = json.loads(resp.read().decode("utf-8"))
+                if final_snap["status"] != "running":
+                    break
+                time.sleep(0.05)
+            self.assertIsNotNone(final_snap)
+            self.assertEqual(final_snap["status"], "completed")
+            self.assertEqual(final_snap["failed"], 1)
+            self.assertIn("unexpected boom", final_snap["errors"][0])
+        finally:
+            server.enrich_manager.cancel()
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
 
 
 if __name__ == "__main__":
