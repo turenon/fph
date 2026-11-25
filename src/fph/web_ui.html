@@ -1,5 +1,6 @@
 <!doctype html>
 <html lang="zh-CN">
+
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -86,8 +87,18 @@
       }
     }
 
-    * { box-sizing: border-box; }
-    html, body { margin: 0; padding: 0; background: var(--bg); color: var(--text); }
+    * {
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      margin: 0;
+      padding: 0;
+      background: var(--bg);
+      color: var(--text);
+    }
+
     body {
       font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", "Segoe UI", Roboto, sans-serif;
       font-size: 14px;
@@ -95,8 +106,15 @@
       -webkit-font-smoothing: antialiased;
     }
 
-    .num { font-variant-numeric: tabular-nums; white-space: nowrap; }
-    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; }
+    .num {
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+    }
+
+    .mono {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 12px;
+    }
 
     .app-shell {
       max-width: 1440px;
@@ -113,6 +131,7 @@
       gap: 12px;
       margin-bottom: 18px;
     }
+
     .brand h1 {
       margin: 0;
       font-size: 20px;
@@ -122,6 +141,7 @@
       align-items: center;
       gap: 10px;
     }
+
     .brand-tag {
       font-size: 12px;
       font-weight: 600;
@@ -131,12 +151,14 @@
       color: var(--primary);
       border: 1px solid var(--primary-border);
     }
+
     .db-meta {
       margin-top: 4px;
       font-size: 12px;
       color: var(--text-subtle);
       word-break: break-all;
     }
+
     .topbar-actions {
       display: flex;
       flex-wrap: wrap;
@@ -163,18 +185,42 @@
       transition: background-color var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out), opacity var(--dur-fast) var(--ease-out);
       will-change: transform;
     }
-    .btn:hover:not(:disabled) { background: var(--surface-hover); border-color: var(--text-subtle); }
-    .btn:active:not(:disabled) { transform: scale(0.97); }
-    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    .btn:hover:not(:disabled) {
+      background: var(--surface-hover);
+      border-color: var(--text-subtle);
+    }
+
+    .btn:active:not(:disabled) {
+      transform: scale(0.97);
+    }
+
+    .btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
     .btn-primary {
       background: var(--primary);
       border-color: var(--primary);
       color: #fff;
     }
-    .btn-primary:hover:not(:disabled) { background: var(--primary-hover); border-color: var(--primary-hover); }
-    .btn-sm { height: 28px; padding: 0 9px; font-size: 12px; border-radius: 6px; }
 
-    input[type="text"], input[type="number"], select {
+    .btn-primary:hover:not(:disabled) {
+      background: var(--primary-hover);
+      border-color: var(--primary-hover);
+    }
+
+    .btn-sm {
+      height: 28px;
+      padding: 0 9px;
+      font-size: 12px;
+      border-radius: 6px;
+    }
+
+    input[type="text"],
+    input[type="number"],
+    select {
       height: 34px;
       padding: 0 10px;
       border: 1px solid var(--border-strong);
@@ -185,7 +231,9 @@
       outline: none;
       transition: border-color var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out);
     }
-    input:focus, select:focus {
+
+    input:focus,
+    select:focus {
       border-color: var(--primary);
       box-shadow: 0 0 0 3px var(--primary-soft);
     }
@@ -197,6 +245,7 @@
       gap: 12px;
       margin-bottom: 18px;
     }
+
     .kpi-card {
       background: var(--surface);
       border: 1px solid var(--border);
@@ -204,9 +253,25 @@
       padding: 12px 14px;
       box-shadow: var(--shadow-sm);
     }
-    .kpi-label { font-size: 12px; color: var(--text-subtle); margin-bottom: 4px; }
-    .kpi-value { font-size: 22px; font-weight: 700; color: var(--text); line-height: 1.2; }
-    .kpi-sub { font-size: 11px; color: var(--text-subtle); margin-top: 4px; }
+
+    .kpi-label {
+      font-size: 12px;
+      color: var(--text-subtle);
+      margin-bottom: 4px;
+    }
+
+    .kpi-value {
+      font-size: 22px;
+      font-weight: 700;
+      color: var(--text);
+      line-height: 1.2;
+    }
+
+    .kpi-sub {
+      font-size: 11px;
+      color: var(--text-subtle);
+      margin-top: 4px;
+    }
 
     /* Tabs */
     .tabs-bar {
@@ -218,7 +283,11 @@
       overflow-x: auto;
       scrollbar-width: none;
     }
-    .tabs-bar::-webkit-scrollbar { display: none; }
+
+    .tabs-bar::-webkit-scrollbar {
+      display: none;
+    }
+
     .tab-btn {
       padding: 10px 16px;
       background: transparent;
@@ -230,9 +299,19 @@
       white-space: nowrap;
       transition: color var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out);
     }
-    .tab-btn:hover { color: var(--text); }
-    .tab-btn:active { transform: scale(0.97); }
-    .tab-btn.active { color: var(--primary); }
+
+    .tab-btn:hover {
+      color: var(--text);
+    }
+
+    .tab-btn:active {
+      transform: scale(0.97);
+    }
+
+    .tab-btn.active {
+      color: var(--primary);
+    }
+
     .tab-indicator {
       position: absolute;
       bottom: 0;
@@ -244,14 +323,26 @@
       transition: transform var(--dur-base) var(--ease-out), width var(--dur-base) var(--ease-out);
       pointer-events: none;
     }
-    .tab-panel { display: none; }
+
+    .tab-panel {
+      display: none;
+    }
+
     .tab-panel.active {
       display: block;
       animation: panelEnter var(--dur-base) var(--ease-out);
     }
+
     @keyframes panelEnter {
-      from { opacity: 0; transform: translateY(4px); }
-      to { opacity: 1; transform: translateY(0); }
+      from {
+        opacity: 0;
+        transform: translateY(4px);
+      }
+
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
     }
 
     /* Card & Filter Bar */
@@ -262,6 +353,7 @@
       box-shadow: var(--shadow-sm);
       overflow: hidden;
     }
+
     .filter-bar {
       padding: 14px 16px;
       border-bottom: 1px solid var(--border);
@@ -271,16 +363,19 @@
       gap: 10px;
       align-items: center;
     }
+
     .filter-group {
       display: flex;
       align-items: center;
       gap: 6px;
     }
+
     .filter-group label {
       font-size: 12px;
       color: var(--text-muted);
       white-space: nowrap;
     }
+
     .check-label {
       display: inline-flex;
       align-items: center;
@@ -290,8 +385,18 @@
       cursor: pointer;
       user-select: none;
     }
-    .check-label input { width: 15px; height: 15px; margin: 0; cursor: pointer; }
-    .multi-select { position: relative; }
+
+    .check-label input {
+      width: 15px;
+      height: 15px;
+      margin: 0;
+      cursor: pointer;
+    }
+
+    .multi-select {
+      position: relative;
+    }
+
     .multi-select-btn {
       height: 32px;
       padding: 0 10px;
@@ -309,15 +414,27 @@
       white-space: nowrap;
       transition: background-color var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out);
     }
-    .multi-select-btn:hover { background: var(--surface-hover); border-color: var(--text-subtle); }
-    .multi-select-btn:active { transform: scale(0.98); }
+
+    .multi-select-btn:hover {
+      background: var(--surface-hover);
+      border-color: var(--text-subtle);
+    }
+
+    .multi-select-btn:active {
+      transform: scale(0.98);
+    }
+
     .multi-select-arrow {
       font-size: 10px;
       color: var(--text-subtle);
       transition: transform var(--dur-base) var(--ease-out);
       display: inline-block;
     }
-    .multi-select.open .multi-select-arrow { transform: rotate(180deg); }
+
+    .multi-select.open .multi-select-arrow {
+      transform: rotate(180deg);
+    }
+
     .multi-select-menu {
       position: absolute;
       top: calc(100% + 4px);
@@ -338,12 +455,14 @@
       transform-origin: top left;
       transition: opacity var(--dur-fast) var(--ease-out), transform var(--dur-base) var(--ease-out), visibility var(--dur-base);
     }
+
     .multi-select.open .multi-select-menu {
       opacity: 1;
       visibility: visible;
       pointer-events: auto;
       transform: translateY(0) scale(1);
     }
+
     .multi-select-opt {
       display: flex;
       align-items: center;
@@ -354,23 +473,30 @@
       cursor: pointer;
       user-select: none;
     }
-    .multi-select-opt:hover { background: var(--surface-muted); }
+
+    .multi-select-opt:hover {
+      background: var(--surface-muted);
+    }
+
     .multi-select-list {
       max-height: 240px;
       overflow-y: auto;
     }
+
     .multi-select-count {
       margin-left: auto;
       font-size: 11px;
       color: var(--text-subtle);
       font-variant-numeric: tabular-nums;
     }
+
     .multi-select-empty {
       padding: 8px;
       font-size: 12px;
       color: var(--text-subtle);
       text-align: center;
     }
+
     .multi-select-actions {
       display: flex;
       justify-content: space-between;
@@ -379,6 +505,7 @@
       padding-top: 6px;
       border-top: 1px solid var(--border);
     }
+
     .multi-select-actions button {
       border: none;
       background: none;
@@ -387,23 +514,21 @@
       cursor: pointer;
       padding: 2px 4px;
     }
-    .multi-select-actions button:hover { text-decoration: underline; }
+
+    .multi-select-actions button:hover {
+      text-decoration: underline;
+    }
 
     /* Batch selection & enrich progress */
     .batch-bar {
       display: grid;
-      grid-template-rows: 0fr;
-      opacity: 0;
-      background: var(--primary-soft);
-      font-size: 13px;
-      border-bottom: 0 solid var(--border);
-      transition: grid-template-rows var(--dur-base) var(--ease-out), opacity var(--dur-fast) var(--ease-out);
-    }
-    .batch-bar.open {
       grid-template-rows: 1fr;
       opacity: 1;
-      border-bottom-width: 1px;
+      background: var(--primary-soft);
+      font-size: 13px;
+      border-bottom: 1px solid var(--border);
     }
+
     .batch-bar-inner {
       min-height: 0;
       overflow: hidden;
@@ -412,16 +537,17 @@
       align-items: center;
       justify-content: space-between;
       gap: 10px;
-      padding: 0 16px;
-      transition: padding var(--dur-base) var(--ease-out);
+      padding: 10px 16px;
     }
-    .batch-bar.open .batch-bar-inner { padding: 10px 16px; }
-    .batch-bar-left, .batch-bar-right {
+
+    .batch-bar-left,
+    .batch-bar-right {
       display: flex;
       flex-wrap: wrap;
       align-items: center;
       gap: 10px;
     }
+
     .enrich-banner {
       display: none;
       flex-direction: column;
@@ -432,13 +558,27 @@
       font-size: 13px;
       transition: background-color var(--dur-base) var(--ease-out), border-color var(--dur-base) var(--ease-out);
     }
+
     .enrich-banner.open {
       display: flex;
       animation: panelEnter var(--dur-base) var(--ease-out);
     }
-    .enrich-banner.auth { background: var(--amber-bg); border-bottom-color: var(--amber-border); }
-    .enrich-banner.done { background: var(--green-bg); border-bottom-color: var(--green-border); }
-    .enrich-banner.err { background: var(--red-bg); border-bottom-color: var(--red-border); }
+
+    .enrich-banner.auth {
+      background: var(--amber-bg);
+      border-bottom-color: var(--amber-border);
+    }
+
+    .enrich-banner.done {
+      background: var(--green-bg);
+      border-bottom-color: var(--green-border);
+    }
+
+    .enrich-banner.err {
+      background: var(--red-bg);
+      border-bottom-color: var(--red-border);
+    }
+
     .enrich-banner-top {
       display: flex;
       flex-wrap: wrap;
@@ -446,6 +586,7 @@
       justify-content: space-between;
       gap: 10px;
     }
+
     .progress-track {
       width: 100%;
       height: 6px;
@@ -453,15 +594,25 @@
       background: rgba(128, 128, 128, 0.16);
       overflow: hidden;
     }
+
     .progress-fill {
       height: 100%;
       border-radius: 999px;
       background: var(--primary);
       transition: width var(--dur-slow) var(--ease-out), background-color var(--dur-base) var(--ease-out);
     }
-    .enrich-banner.auth .progress-fill { background: var(--amber); }
-    .enrich-banner.done .progress-fill { background: var(--green); }
-    .enrich-banner.err .progress-fill { background: var(--red); }
+
+    .enrich-banner.auth .progress-fill {
+      background: var(--amber);
+    }
+
+    .enrich-banner.done .progress-fill {
+      background: var(--green);
+    }
+
+    .enrich-banner.err .progress-fill {
+      background: var(--red);
+    }
 
     /* Console tab */
     .console-grid {
@@ -470,6 +621,7 @@
       gap: 16px;
       margin-bottom: 16px;
     }
+
     .console-card-head {
       padding: 12px 16px;
       border-bottom: 1px solid var(--border);
@@ -480,27 +632,32 @@
       gap: 8px;
       background: var(--surface-muted);
     }
+
     .console-card-head h3 {
       margin: 0;
       font-size: 14px;
       font-weight: 700;
     }
+
     .console-card-body {
       padding: 14px 16px;
       display: flex;
       flex-direction: column;
       gap: 12px;
     }
+
     .console-row {
       display: flex;
       flex-wrap: wrap;
       align-items: flex-end;
       gap: 10px;
     }
+
     .console-divider {
       border-top: 1px solid var(--border);
       padding-top: 12px;
     }
+
     .console-auth-bar {
       display: none;
       align-items: center;
@@ -512,7 +669,11 @@
       border-bottom: 1px solid #fcd34d;
       font-size: 13px;
     }
-    .console-auth-bar.open { display: flex; }
+
+    .console-auth-bar.open {
+      display: flex;
+    }
+
     .log-terminal {
       margin: 0;
       padding: 14px 16px;
@@ -529,13 +690,17 @@
     }
 
     /* Table */
-    .table-wrap { overflow-x: auto; }
+    .table-wrap {
+      overflow-x: auto;
+    }
+
     table {
       width: 100%;
       border-collapse: collapse;
       text-align: left;
       font-size: 13px;
     }
+
     thead th {
       background: var(--surface-muted);
       color: var(--text-muted);
@@ -545,25 +710,47 @@
       border-bottom: 1px solid var(--border);
       white-space: nowrap;
     }
+
     tbody td {
       padding: 11px 12px;
       border-bottom: 1px solid var(--border);
       vertical-align: top;
       transition: background-color var(--dur-fast) var(--ease-out);
     }
-    tbody tr.clickable-row { cursor: pointer; }
-    tbody tr.clickable-row:hover td { background: var(--surface-hover); }
-    tbody tr.row-selected td { background: var(--primary-soft); }
-    tbody tr:last-child td { border-bottom: none; }
-    tbody.is-loading { opacity: 0.55; transition: opacity var(--dur-fast) var(--ease-out); }
 
-    .title-cell { min-width: 260px; max-width: 420px; }
+    tbody tr.clickable-row {
+      cursor: pointer;
+    }
+
+    tbody tr.clickable-row:hover td {
+      background: var(--surface-hover);
+    }
+
+    tbody tr.row-selected td {
+      background: var(--primary-soft);
+    }
+
+    tbody tr:last-child td {
+      border-bottom: none;
+    }
+
+    tbody.is-loading {
+      opacity: 0.55;
+      transition: opacity var(--dur-fast) var(--ease-out);
+    }
+
+    .title-cell {
+      min-width: 260px;
+      max-width: 420px;
+    }
+
     .item-title {
       font-weight: 600;
       color: var(--text);
       margin-bottom: 4px;
       word-break: break-word;
     }
+
     .item-sub {
       display: flex;
       flex-wrap: wrap;
@@ -572,14 +759,17 @@
       font-size: 12px;
       color: var(--text-subtle);
     }
+
     .title-cell .item-sub {
       flex-wrap: nowrap;
       white-space: nowrap;
       overflow: hidden;
     }
+
     .title-cell .item-sub .badge {
       flex-shrink: 0;
     }
+
     .item-loc {
       min-width: 0;
       overflow: hidden;
@@ -598,15 +788,48 @@
       white-space: nowrap;
       line-height: 1.6;
     }
-    .badge-green { background: var(--green-bg); color: var(--green); }
-    .badge-red { background: var(--red-bg); color: var(--red); }
-    .badge-amber { background: var(--amber-bg); color: var(--amber); }
-    .badge-blue { background: var(--blue-bg); color: var(--blue); }
-    .badge-purple { background: var(--purple-bg); color: var(--purple); }
-    .badge-slate { background: var(--slate-bg); color: var(--slate); }
 
-    .price-main { font-weight: 700; color: var(--text); }
-    .price-sub { font-size: 11px; color: var(--text-subtle); margin-top: 2px; }
+    .badge-green {
+      background: var(--green-bg);
+      color: var(--green);
+    }
+
+    .badge-red {
+      background: var(--red-bg);
+      color: var(--red);
+    }
+
+    .badge-amber {
+      background: var(--amber-bg);
+      color: var(--amber);
+    }
+
+    .badge-blue {
+      background: var(--blue-bg);
+      color: var(--blue);
+    }
+
+    .badge-purple {
+      background: var(--purple-bg);
+      color: var(--purple);
+    }
+
+    .badge-slate {
+      background: var(--slate-bg);
+      color: var(--slate);
+    }
+
+    .price-main {
+      font-weight: 700;
+      color: var(--text);
+    }
+
+    .price-sub {
+      font-size: 11px;
+      color: var(--text-subtle);
+      margin-top: 2px;
+    }
+
     .court-sub {
       max-width: 160px;
       overflow: hidden;
@@ -615,7 +838,12 @@
     }
 
     /* Progress bar for stats */
-    .meter-wrap { display: flex; align-items: center; gap: 8px; }
+    .meter-wrap {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
     .meter-track {
       width: 64px;
       height: 7px;
@@ -624,8 +852,16 @@
       overflow: hidden;
       flex-shrink: 0;
     }
-    .meter-fill { height: 100%; border-radius: 999px; background: var(--primary); }
-    .meter-fill.green { background: #16a34a; }
+
+    .meter-fill {
+      height: 100%;
+      border-radius: 999px;
+      background: var(--primary);
+    }
+
+    .meter-fill.green {
+      background: #16a34a;
+    }
 
     /* Pagination & Empty state */
     .table-footer {
@@ -640,13 +876,26 @@
       font-size: 13px;
       color: var(--text-muted);
     }
-    .pager-controls { display: flex; align-items: center; gap: 8px; }
+
+    .pager-controls {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
     .empty-state {
       padding: 44px 20px;
       text-align: center;
       color: var(--text-subtle);
     }
-    .empty-state strong { display: block; font-size: 15px; color: var(--text); margin-bottom: 6px; }
+
+    .empty-state strong {
+      display: block;
+      font-size: 15px;
+      color: var(--text);
+      margin-bottom: 6px;
+    }
+
     .error-banner {
       padding: 12px 16px;
       background: var(--red-bg);
@@ -672,11 +921,13 @@
       pointer-events: none;
       transition: opacity var(--dur-slow) var(--ease-out), visibility var(--dur-slow);
     }
+
     .modal-backdrop.open {
       opacity: 1;
       visibility: visible;
       pointer-events: auto;
     }
+
     .drawer {
       width: min(820px, 100vw);
       height: 100%;
@@ -689,7 +940,11 @@
       transition: transform var(--dur-slow) var(--ease-out);
       will-change: transform;
     }
-    .modal-backdrop.open .drawer { transform: translateX(0); }
+
+    .modal-backdrop.open .drawer {
+      transform: translateX(0);
+    }
+
     .drawer-header {
       padding: 16px 20px;
       border-bottom: 1px solid var(--border);
@@ -699,12 +954,19 @@
       gap: 12px;
       background: var(--surface-muted);
     }
-    .drawer-title { font-size: 17px; font-weight: 700; margin: 0 0 6px; }
+
+    .drawer-title {
+      font-size: 17px;
+      font-weight: 700;
+      margin: 0 0 6px;
+    }
+
     .drawer-body {
       padding: 18px 20px 32px;
       overflow-y: auto;
       flex: 1;
     }
+
     .section-title {
       font-size: 14px;
       font-weight: 700;
@@ -715,19 +977,32 @@
       justify-content: space-between;
       align-items: center;
     }
+
     .detail-grid {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
       gap: 10px;
     }
+
     .detail-kv {
       background: var(--surface-muted);
       border: 1px solid var(--border);
       border-radius: 8px;
       padding: 8px 10px;
     }
-    .detail-k { font-size: 11px; color: var(--text-subtle); }
-    .detail-v { font-size: 13px; font-weight: 600; margin-top: 2px; word-break: break-word; }
+
+    .detail-k {
+      font-size: 11px;
+      color: var(--text-subtle);
+    }
+
+    .detail-v {
+      font-size: 13px;
+      font-weight: 600;
+      margin-top: 2px;
+      word-break: break-word;
+    }
+
     .text-box {
       background: var(--surface-muted);
       border: 1px solid var(--border);
@@ -740,14 +1015,27 @@
       max-height: 280px;
       overflow-y: auto;
     }
-    .highlight-row { background: var(--primary-soft) !important; }
-    .actions-cell { white-space: nowrap; display: flex; gap: 6px; }
+
+    .highlight-row {
+      background: var(--primary-soft) !important;
+    }
+
+    .actions-cell {
+      white-space: nowrap;
+      display: flex;
+      gap: 6px;
+    }
+
     .btn-danger {
       background: var(--red);
       color: #fff;
       border-color: var(--red);
     }
-    .btn-danger:hover:not(:disabled) { opacity: 0.9; }
+
+    .btn-danger:hover:not(:disabled) {
+      opacity: 0.9;
+    }
+
     .task-pill {
       display: none;
       align-items: center;
@@ -763,11 +1051,16 @@
       cursor: pointer;
       transition: transform var(--dur-fast) var(--ease-out), background-color var(--dur-fast) var(--ease-out);
     }
+
     .task-pill.open {
       display: inline-flex;
       animation: panelEnter var(--dur-base) var(--ease-out);
     }
-    .task-pill:active { transform: scale(0.97); }
+
+    .task-pill:active {
+      transform: scale(0.97);
+    }
+
     .task-pill::before {
       content: "";
       width: 7px;
@@ -776,15 +1069,27 @@
       background: currentColor;
       animation: pulseDot 1.6s var(--ease-in-out) infinite;
     }
+
     @keyframes pulseDot {
-      0%, 100% { opacity: 1; transform: scale(1); }
-      50% { opacity: 0.4; transform: scale(0.8); }
+
+      0%,
+      100% {
+        opacity: 1;
+        transform: scale(1);
+      }
+
+      50% {
+        opacity: 0.4;
+        transform: scale(0.8);
+      }
     }
+
     .task-pill.auth {
       background: var(--amber-bg);
       border-color: var(--amber-border);
       color: var(--amber);
     }
+
     .toast-stack {
       position: fixed;
       right: 20px;
@@ -796,6 +1101,7 @@
       max-width: min(400px, calc(100vw - 32px));
       pointer-events: none;
     }
+
     .toast {
       pointer-events: auto;
       display: flex;
@@ -816,11 +1122,35 @@
       transform: translateY(10px) scale(0.96);
       transition: opacity var(--dur-base) var(--ease-out), transform var(--dur-base) var(--ease-out);
     }
-    .toast.show { opacity: 1; transform: translateY(0) scale(1); }
-    .toast.leave { opacity: 0; transform: translateX(16px) scale(0.97); }
-    .toast.success { border-color: var(--green-border); background: var(--green-bg); color: var(--green); }
-    .toast.warning { border-color: var(--amber-border); background: var(--amber-bg); color: var(--amber); }
-    .toast.error { border-color: var(--red-border); background: var(--red-bg); color: var(--red); }
+
+    .toast.show {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+
+    .toast.leave {
+      opacity: 0;
+      transform: translateX(16px) scale(0.97);
+    }
+
+    .toast.success {
+      border-color: var(--green-border);
+      background: var(--green-bg);
+      color: var(--green);
+    }
+
+    .toast.warning {
+      border-color: var(--amber-border);
+      background: var(--amber-bg);
+      color: var(--amber);
+    }
+
+    .toast.error {
+      border-color: var(--red-border);
+      background: var(--red-bg);
+      color: var(--red);
+    }
+
     .toast-close {
       border: none;
       background: none;
@@ -831,7 +1161,11 @@
       line-height: 1;
       padding: 2px;
     }
-    .toast-close:hover { opacity: 1; }
+
+    .toast-close:hover {
+      opacity: 1;
+    }
+
     .confirm-backdrop {
       position: fixed;
       inset: 0;
@@ -848,11 +1182,13 @@
       pointer-events: none;
       transition: opacity var(--dur-base) var(--ease-out), visibility var(--dur-base);
     }
+
     .confirm-backdrop.open {
       opacity: 1;
       visibility: visible;
       pointer-events: auto;
     }
+
     .confirm-dialog {
       width: min(440px, 100%);
       background: var(--surface);
@@ -866,10 +1202,30 @@
       transform: scale(0.95) translateY(6px);
       transition: transform var(--dur-base) var(--ease-out);
     }
-    .confirm-backdrop.open .confirm-dialog { transform: scale(1) translateY(0); }
-    .confirm-title { font-size: 16px; font-weight: 700; margin: 0; }
-    .confirm-desc { font-size: 13px; color: var(--text-muted); line-height: 1.6; }
-    .confirm-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
+
+    .confirm-backdrop.open .confirm-dialog {
+      transform: scale(1) translateY(0);
+    }
+
+    .confirm-title {
+      font-size: 16px;
+      font-weight: 700;
+      margin: 0;
+    }
+
+    .confirm-desc {
+      font-size: 13px;
+      color: var(--text-muted);
+      line-height: 1.6;
+    }
+
+    .confirm-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+      margin-top: 4px;
+    }
+
     .drawer-enrich-bar {
       display: none;
       padding: 10px 14px;
@@ -882,13 +1238,27 @@
       flex-direction: column;
       transition: background-color var(--dur-base) var(--ease-out), border-color var(--dur-base) var(--ease-out);
     }
+
     .drawer-enrich-bar.open {
       display: flex;
       animation: panelEnter var(--dur-base) var(--ease-out);
     }
-    .drawer-enrich-bar.auth { background: var(--amber-bg); border-color: var(--amber-border); }
-    .drawer-enrich-bar.done { background: var(--green-bg); border-color: var(--green-border); }
-    .drawer-enrich-bar.err { background: var(--red-bg); border-color: var(--red-border); }
+
+    .drawer-enrich-bar.auth {
+      background: var(--amber-bg);
+      border-color: var(--amber-border);
+    }
+
+    .drawer-enrich-bar.done {
+      background: var(--green-bg);
+      border-color: var(--green-border);
+    }
+
+    .drawer-enrich-bar.err {
+      background: var(--red-bg);
+      border-color: var(--red-border);
+    }
+
     .cmd-details summary {
       font-size: 12px;
       color: var(--text-subtle);
@@ -897,7 +1267,10 @@
     }
 
     @media (prefers-reduced-motion: reduce) {
-      *, *::before, *::after {
+
+      *,
+      *::before,
+      *::after {
         animation-duration: 0.01ms !important;
         animation-iteration-count: 1 !important;
         transition-duration: 0.01ms !important;
@@ -906,13 +1279,28 @@
     }
 
     @media (max-width: 720px) {
-      .app-shell { padding: 14px 12px 30px; }
-      .title-cell { min-width: 200px; }
-      .console-grid { grid-template-columns: 1fr; }
-      .toast-stack { left: 16px; right: 16px; bottom: 16px; max-width: none; }
+      .app-shell {
+        padding: 14px 12px 30px;
+      }
+
+      .title-cell {
+        min-width: 200px;
+      }
+
+      .console-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .toast-stack {
+        left: 16px;
+        right: 16px;
+        bottom: 16px;
+        max-width: none;
+      }
     }
   </style>
 </head>
+
 <body>
   <div class="app-shell">
     <header class="topbar">
@@ -934,13 +1322,41 @@
     <div class="error-banner" id="errorBanner"></div>
 
     <section class="kpi-grid" id="kpiGrid">
-      <div class="kpi-card"><div class="kpi-label">标的物总数</div><div class="kpi-value num" id="kpiProps">-</div><div class="kpi-sub">按地址归并去重</div></div>
-      <div class="kpi-card"><div class="kpi-label">拍卖轮次</div><div class="kpi-value num" id="kpiRounds">-</div><div class="kpi-sub">含全部拍次记录</div></div>
-      <div class="kpi-card"><div class="kpi-label">纯住宅全产权</div><div class="kpi-value num" id="kpiResidential">-</div><div class="kpi-sub">行情分析口径</div></div>
-      <div class="kpi-card"><div class="kpi-label">在拍 / 预告</div><div class="kpi-value num" id="kpiActive">-</div><div class="kpi-sub">可关注竞拍</div></div>
-      <div class="kpi-card"><div class="kpi-label">已成交</div><div class="kpi-value num" id="kpiSold">-</div><div class="kpi-sub">历史成交样本</div></div>
-      <div class="kpi-card"><div class="kpi-label">已流拍</div><div class="kpi-value num" id="kpiFailed">-</div><div class="kpi-sub">等待再拍/参考</div></div>
-      <div class="kpi-card"><div class="kpi-label">已补抓详情</div><div class="kpi-value num" id="kpiEnriched">-</div><div class="kpi-sub">含面积/公告/风险</div></div>
+      <div class="kpi-card">
+        <div class="kpi-label">标的物总数</div>
+        <div class="kpi-value num" id="kpiProps">-</div>
+        <div class="kpi-sub">按地址归并去重</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">拍卖轮次</div>
+        <div class="kpi-value num" id="kpiRounds">-</div>
+        <div class="kpi-sub">含全部拍次记录</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">纯住宅全产权</div>
+        <div class="kpi-value num" id="kpiResidential">-</div>
+        <div class="kpi-sub">行情分析口径</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">在拍 / 预告</div>
+        <div class="kpi-value num" id="kpiActive">-</div>
+        <div class="kpi-sub">可关注竞拍</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">已成交</div>
+        <div class="kpi-value num" id="kpiSold">-</div>
+        <div class="kpi-sub">历史成交样本</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">已流拍</div>
+        <div class="kpi-value num" id="kpiFailed">-</div>
+        <div class="kpi-sub">等待再拍/参考</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">已补抓详情</div>
+        <div class="kpi-value num" id="kpiEnriched">-</div>
+        <div class="kpi-sub">含面积/公告/风险</div>
+      </div>
     </section>
 
     <nav class="tabs-bar" role="tablist">
@@ -969,7 +1385,9 @@
           </div>
           <div class="filter-group">
             <label for="filterCity">城市</label>
-            <select id="filterCity"><option value="">全部城市</option></select>
+            <select id="filterCity">
+              <option value="">全部城市</option>
+            </select>
           </div>
           <div class="filter-group">
             <label for="btnDistrictMulti">区县（多选）</label>
@@ -1071,7 +1489,8 @@
               <option value="enriched">已抓详情</option>
             </select>
           </div>
-          <button class="btn" id="btnEnrichMissing" type="button" title="先本地重提面积/单价，再自动补抓当前筛选下仍缺失的前 30 条">一键补抓缺失项</button>
+          <button class="btn" id="btnEnrichMissing" type="button"
+            title="先本地重提面积/单价，再自动补抓当前筛选下仍缺失的前 30 条">一键补抓缺失项</button>
           <button class="btn" id="btnResetItems" type="button">重置</button>
         </div>
 
@@ -1080,7 +1499,8 @@
             <div class="batch-bar-left">
               <span id="batchCountText">已选 <strong>0</strong> 条（单次最多 30 条）</span>
               <button class="btn btn-sm" id="btnTrimSelection" type="button" style="display:none;">仅保留前 30 条</button>
-              <label class="check-label" title="默认跳过已采集过详情的房源；勾选后将强制重新采集"><input type="checkbox" id="chkForceEnrich" /> 含已采集房源</label>
+              <label class="check-label" title="默认跳过已采集过详情的房源；勾选后将强制重新采集"><input type="checkbox" id="chkForceEnrich" />
+                含已采集房源</label>
             </div>
             <div class="batch-bar-right">
               <button class="btn btn-sm" id="btnClearSelection" type="button" disabled>取消选择</button>
@@ -1094,7 +1514,9 @@
             <div id="enrichBannerInfo"></div>
             <div id="enrichBannerActions" style="display:flex;gap:8px;flex-wrap:wrap;"></div>
           </div>
-          <div class="progress-track"><div class="progress-fill" id="enrichProgressFill" style="width:0%"></div></div>
+          <div class="progress-track">
+            <div class="progress-fill" id="enrichProgressFill" style="width:0%"></div>
+          </div>
         </div>
 
         <div class="table-wrap">
@@ -1116,7 +1538,9 @@
               </tr>
             </thead>
             <tbody id="itemsBody">
-              <tr><td colspan="12" class="empty-state">加载中...</td></tr>
+              <tr>
+                <td colspan="12" class="empty-state">加载中...</td>
+              </tr>
             </tbody>
           </table>
         </div>
@@ -1144,7 +1568,9 @@
         <div class="filter-bar">
           <div class="filter-group">
             <label for="bCity">城市</label>
-            <select id="bCity"><option value="">全部城市</option></select>
+            <select id="bCity">
+              <option value="">全部城市</option>
+            </select>
           </div>
           <div class="filter-group">
             <label for="btnBDistrictMulti">区县（多选）</label>
@@ -1224,7 +1650,9 @@
               </tr>
             </thead>
             <tbody id="bargainsBody">
-              <tr><td colspan="12" class="empty-state">加载中...</td></tr>
+              <tr>
+                <td colspan="12" class="empty-state">加载中...</td>
+              </tr>
             </tbody>
           </table>
         </div>
@@ -1237,18 +1665,23 @@
         <div class="filter-bar">
           <div class="filter-group">
             <label for="sCity">城市</label>
-            <select id="sCity"><option value="">全部城市</option></select>
+            <select id="sCity">
+              <option value="">全部城市</option>
+            </select>
           </div>
           <label class="check-label"><input type="checkbox" id="sByDistrict" /> 按区县细分</label>
           <label class="check-label"><input type="checkbox" id="sByMonth" /> 按月份细分</label>
           <span style="font-size:12px;color:var(--text-subtle);">统计口径：仅纯住宅全产权房源（排除车位、商业与部分产权）</span>
-          <a class="btn" id="btnExportDeals" href="/api/export?dataset=deals&format=csv" style="margin-left:auto;">导出住宅结拍 CSV</a>
+          <a class="btn" id="btnExportDeals" href="/api/export?dataset=deals&format=csv"
+            style="margin-left:auto;">导出住宅结拍 CSV</a>
         </div>
         <div class="table-wrap">
           <table>
             <thead id="statsHead"></thead>
             <tbody id="statsBody">
-              <tr><td colspan="11" class="empty-state">加载中...</td></tr>
+              <tr>
+                <td colspan="11" class="empty-state">加载中...</td>
+              </tr>
             </tbody>
           </table>
         </div>
@@ -1282,7 +1715,9 @@
               </tr>
             </thead>
             <tbody id="logsBody">
-              <tr><td colspan="13" class="empty-state">加载中...</td></tr>
+              <tr>
+                <td colspan="13" class="empty-state">加载中...</td>
+              </tr>
             </tbody>
           </table>
         </div>
@@ -1305,7 +1740,9 @@
             <div class="console-row">
               <div class="filter-group">
                 <label for="cRegion">监控区域</label>
-                <select id="cRegion"><option value="">全部区域</option></select>
+                <select id="cRegion">
+                  <option value="">全部区域</option>
+                </select>
               </div>
               <div class="filter-group">
                 <label for="cPlatform">平台</label>
@@ -1334,7 +1771,8 @@
               <label class="check-label"><input type="checkbox" id="cActiveOnly" /> 仅在拍/预告</label>
               <label class="check-label"><input type="checkbox" id="cNoEnrich" /> 暂不抓详情</label>
               <label class="check-label"><input type="checkbox" id="cNoRefresh" /> 暂不刷结拍</label>
-              <label class="check-label" title="从第 1 页重新扫描全部历史记录"><input type="checkbox" id="cResetCheckpoint" /> 从头重扫断点</label>
+              <label class="check-label" title="从第 1 页重新扫描全部历史记录"><input type="checkbox" id="cResetCheckpoint" />
+                从头重扫断点</label>
               <button class="btn btn-primary" id="btnConsoleSync" type="button" style="margin-left:auto;">开始同步</button>
             </div>
             <div class="console-row console-divider">
@@ -1381,15 +1819,18 @@
             <div class="console-row" style="align-items:center;">
               <button class="btn" id="btnConsoleDoctor" type="button">环境自检</button>
               <button class="btn" id="btnConsoleCleanupDry" type="button">清理预览</button>
-              <button class="btn btn-danger" id="btnConsoleCleanupRun" type="button" style="margin-left:auto;">执行数据清理</button>
+              <button class="btn btn-danger" id="btnConsoleCleanupRun" type="button"
+                style="margin-left:auto;">执行数据清理</button>
             </div>
             <div class="console-row console-divider" style="align-items:flex-end;">
               <div class="filter-group">
                 <label for="cSchedInterval">定时采集间隔（分钟）</label>
                 <input type="number" id="cSchedInterval" value="360" min="5" max="10080" style="width:110px;" />
               </div>
-              <label class="check-label" style="padding-bottom:6px;"><input type="checkbox" id="cSchedDelayFirst" /> 延迟首个周期再运行</label>
-              <button class="btn btn-primary" id="btnConsoleSchedule" type="button" style="margin-left:auto;">启动定时采集</button>
+              <label class="check-label" style="padding-bottom:6px;"><input type="checkbox" id="cSchedDelayFirst" />
+                延迟首个周期再运行</label>
+              <button class="btn btn-primary" id="btnConsoleSchedule" type="button"
+                style="margin-left:auto;">启动定时采集</button>
             </div>
             <div style="font-size:12px;color:var(--text-subtle);">
               提示：为避免浏览器实例冲突，后台自动采集与「房源列表」批量详情采集不会同时运行。
@@ -1405,7 +1846,8 @@
             <span class="badge badge-slate" id="consoleStatusBadge">空闲</span>
             <details class="cmd-details" id="consoleCmdDetails" style="display:none;">
               <summary>查看执行命令</summary>
-              <span class="mono" id="consoleCmdPreview" style="color:var(--text-subtle);display:block;margin-top:4px;"></span>
+              <span class="mono" id="consoleCmdPreview"
+                style="color:var(--text-subtle);display:block;margin-top:4px;"></span>
             </details>
           </div>
           <div style="display:flex;gap:8px;">
@@ -1434,7 +1876,8 @@
         </div>
         <div style="display:flex;gap:8px;flex-shrink:0;">
           <button class="btn btn-sm" id="btnDrawerReenrich" type="button" style="display:none;">重抓详情</button>
-          <a class="btn btn-sm btn-primary" id="drawerExternalLink" href="#" target="_blank" rel="noopener noreferrer" style="display:none;">打开原页</a>
+          <a class="btn btn-sm btn-primary" id="drawerExternalLink" href="#" target="_blank" rel="noopener noreferrer"
+            style="display:none;">打开原页</a>
           <button class="btn btn-sm" id="btnCloseDrawer" type="button">关闭</button>
         </div>
       </div>
@@ -1832,7 +2275,9 @@
         $("batchBar").classList.toggle("open", count > 0);
         $("batchCountText").innerHTML = overLimit
           ? `已选 <strong style="color:var(--red);">${count}</strong> 条（超出单次上限 30 条）`
-          : `已选 <strong>${count}</strong> 条（单次最多 30 条）`;
+          : count === 0
+            ? `已选 <strong>0</strong> 条（勾选下方标的即可批量采集/重抓详情，单次最多 30 条）`
+            : `已选 <strong>${count}</strong> 条（单次最多 30 条）`;
         $("btnTrimSelection").style.display = overLimit ? "inline-flex" : "none";
         $("btnClearSelection").disabled = count === 0;
         $("btnBatchEnrich").disabled = count === 0 || overLimit || state.enrichActive;
@@ -2179,7 +2624,6 @@
                 <td>
                   <div class="actions-cell">
                     <button class="btn btn-sm btn-detail" data-round-id="${it.round_id}" type="button">详情</button>
-                    ${url ? `<a class="btn btn-sm" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()">${escapeHtml(platformLabel(it.platform, url))}</a>` : ""}
                   </div>
                 </td>
               </tr>
@@ -2209,7 +2653,6 @@
         body.innerHTML = '<div class="empty-state">加载中...</div>';
         backdrop.classList.add("open");
         backdrop.setAttribute("aria-hidden", "false");
-
         try {
           const d = await apiGet(`/api/items/${roundId}`);
           $("drawerTitle").textContent = d.title || `标的 #${roundId}`;
@@ -2404,7 +2847,6 @@
                 <td>
                   <div class="actions-cell">
                     <button class="btn btn-sm btn-detail" data-round-id="${r.round_id}" type="button">详情</button>
-                    ${url ? `<a class="btn btn-sm" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()">${escapeHtml(platformLabel(r.platform, url))}</a>` : ""}
                   </div>
                 </td>
               </tr>
@@ -3238,4 +3680,5 @@
     })();
   </script>
 </body>
+
 </html>
