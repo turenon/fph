@@ -564,6 +564,7 @@ class SyncPipeline:
         region_filter: str | None = None,
         allowed_property_types: Sequence[str] | None = None,
         allowed_statuses: Sequence[str] | str | None = None,
+        allowed_districts: Sequence[str] | None = None,
         lookback_days: int | None = None,
     ) -> tuple[int, str | None]:
         """Fetch detail & announcement text once for rounds without detail_fetched_at."""
@@ -575,6 +576,11 @@ class SyncPipeline:
             tuple(normalize_statuses(allowed_statuses))
             if allowed_statuses is not None
             else tuple(normalize_statuses(self.config.provider.enrich_statuses))
+        )
+        eff_districts = (
+            tuple(str(d).strip() for d in allowed_districts if str(d).strip())
+            if allowed_districts is not None
+            else tuple(self.config.provider.enrich_districts)
         )
         eff_lookback = self.config.provider.lookback_days if lookback_days is None else max(0, lookback_days)
         min_date = _cutoff_datetime_str(eff_lookback)
@@ -592,6 +598,7 @@ class SyncPipeline:
                 limit=remaining,
                 allowed_property_types=eff_types or None,
                 allowed_statuses=eff_statuses or None,
+                allowed_districts=eff_districts or None,
                 min_date=min_date,
                 max_attempts=self.config.provider.max_detail_attempts,
                 cooldown_hours=self.config.provider.retry_cooldown_hours,

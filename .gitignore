@@ -9,10 +9,11 @@ build/
 
 # Local runtime config & data
 config.toml
-data/
+data/*
 exports/
 logs/
 *.db
+!data/fph.db
 *.db-journal
 *.db-wal
 *.db-shm

@@ -197,8 +197,18 @@ class WebDashboardTest(unittest.TestCase):
             self.assertEqual(resp.status, 200)
             html = resp.read().decode("utf-8")
             self.assertIn("FPH 法拍房数据看板", html)
-            self.assertIn("filterExcludeSelloff", html)
             self.assertIn("stageMulti", html)
+            self.assertIn("statusMulti", html)
+            self.assertIn("bStageMulti", html)
+            self.assertIn("districtMulti", html)
+            self.assertIn("bDistrictMulti", html)
+            self.assertIn("toastStack", html)
+            self.assertIn("confirmBackdrop", html)
+            self.assertIn("drawerEnrichBar", html)
+            self.assertIn("globalTaskPill", html)
+            self.assertIn("filterDetailState", html)
+            self.assertIn("btnEnrichMissing", html)
+            self.assertNotIn("filterExcludeSelloff", html)
             self.assertIn("tab-console", html)
             self.assertIn("btnQuickSync7d", html)
             self.assertIn("consoleLogBox", html)
@@ -239,6 +249,16 @@ class WebDashboardTest(unittest.TestCase):
         self.assertEqual(active["total"], 1)
         self.assertEqual(active["items"][0]["item_id"], "w_202_r2")
 
+        other_status = self._get_json("/api/items?status=other")
+        self.assertEqual(other_status["total"], 1)
+        self.assertEqual(other_status["items"][0]["item_id"], "w_404_jd")
+
+        multi_status = self._get_json("/api/items?status=ongoing,upcoming")
+        self.assertEqual(multi_status["total"], 1)
+
+        repeated_status = self._get_json("/api/items?status=upcoming&status=other")
+        self.assertEqual(repeated_status["total"], 2)
+
         multi_stage = self._get_json(f"/api/items?stage={quote('一拍,二拍')}")
         self.assertEqual(multi_stage["total"], 5)
 
@@ -247,6 +267,18 @@ class WebDashboardTest(unittest.TestCase):
 
         no_first = self._get_json(f"/api/items?exclude_stage={quote('一拍')}")
         self.assertEqual(no_first["total"], 2)
+
+        multi_district = self._get_json(f"/api/items?district={quote('鼓楼区,仓山区')}")
+        self.assertEqual(multi_district["total"], 3)
+
+        repeated_district = self._get_json(f"/api/items?district={quote('仓山区')}&district={quote('新罗区')}")
+        self.assertEqual(repeated_district["total"], 2)
+
+        missing_metric = self._get_json("/api/items?detail_state=missing_metric")
+        self.assertEqual(missing_metric["total"], 2)
+        self.assertTrue(
+            all(it["area_sqm"] is None or it["unit_price"] is None for it in missing_metric["items"])
+        )
 
         detail = self._get_json(f"/api/items/{self.r2_id}")
         self.assertEqual(detail["item_id"], "w_101_r2")
@@ -269,6 +301,13 @@ class WebDashboardTest(unittest.TestCase):
         self.assertEqual(len(bargains["rows"]), 1)
         self.assertEqual(bargains["rows"][0]["district"], "仓山区")
 
+        bargains_multi_d = self._get_json(f"/api/bargains?max_discount=0.75&district={quote('鼓楼区,仓山区')}")
+        self.assertEqual(len(bargains_multi_d["rows"]), 1)
+        self.assertEqual(bargains_multi_d["rows"][0]["district"], "仓山区")
+
+        bargains_other_d = self._get_json(f"/api/bargains?max_discount=0.75&district={quote('鼓楼区')}")
+        self.assertEqual(len(bargains_other_d["rows"]), 0)
+
         logs = self._get_json("/api/sync-runs")
         self.assertEqual(len(logs["rows"]), 1)
         self.assertEqual(logs["rows"][0]["status"], "success")
@@ -280,6 +319,16 @@ class WebDashboardTest(unittest.TestCase):
             text = raw.decode("utf-8-sig")
             self.assertIn("w_101_r2", text)
             self.assertIn("w_303_comm", text)
+
+        with urlopen(f"{self.base_url}/api/export?dataset=bargains&format=csv&max_discount=0.75&district={quote('鼓楼区')}", timeout=5) as resp:
+            self.assertEqual(resp.status, 200)
+            b_empty = resp.read().decode("utf-8-sig")
+            self.assertNotIn("w_202_r2", b_empty)
+
+        with urlopen(f"{self.base_url}/api/export?dataset=bargains&format=csv&max_discount=0.75&district={quote('仓山区')}", timeout=5) as resp:
+            self.assertEqual(resp.status, 200)
+            b_match = resp.read().decode("utf-8-sig")
+            self.assertIn("w_202_r2", b_match)
 
     def test_batch_enrich_skip_limit_auth_pause_resume_and_cancel(self) -> None:
         class _BatchStubProvider(AuctionProvider):
@@ -597,6 +646,194 @@ class WebDashboardTest(unittest.TestCase):
             self.assertEqual(final_snap["status"], "completed")
             self.assertEqual(final_snap["failed"], 1)
             self.assertIn("unexpected boom", final_snap["errors"][0])
+        finally:
+            server.enrich_manager.cancel()
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
+
+    def test_enrich_missing_recomputes_local_area_and_queues_remaining(self) -> None:
+        with AuctionDB(self.db_path) as db:
+            # Make w_202_r2 missing area_sqm in properties, but give it notice_text containing area
+            row_202 = db.conn.execute(
+                "SELECT id, property_id FROM auction_rounds WHERE item_id = 'w_202_r2'"
+            ).fetchone()
+            db.conn.execute(
+                "UPDATE properties SET area_sqm = NULL WHERE id = ?",
+                (int(row_202["property_id"]),),
+            )
+            db.conn.execute(
+                "UPDATE auction_rounds SET unit_price = NULL, notice_text = '建筑面积98.5平方米。' WHERE id = ?",
+                (int(row_202["id"]),),
+            )
+            db.conn.commit()
+
+        class _QuickStubProvider:
+            platform = "taobao"
+
+            def check_ready(self) -> tuple[bool, str]:
+                return True, "ok"
+
+            def fetch_detail(self, item_id: str, url: str) -> RawAuctionDetail:
+                return RawAuctionDetail(
+                    platform="taobao",
+                    item_id=item_id,
+                    url=url,
+                    title="补抓成功",
+                    area_sqm=120.0,
+                    notice_text="建筑面积120平方米。",
+                )
+
+        def stub_factory(cfg: AppConfig) -> dict[str, AuctionProvider]:
+            return {"taobao": _QuickStubProvider()}
+
+        cfg = AppConfig(
+            storage=StorageConfig(db_path=self.db_path),
+            regions=[RegionConfig(name="福州市-住宅", province="福建", city="福州", location_code="350100")],
+        )
+        server = create_web_server(
+            cfg,
+            host="127.0.0.1",
+            port=0,
+            provider_factory=stub_factory,
+            sleep_fn=lambda _: None,
+        )
+        port = server.server_address[1]
+        base = f"http://127.0.0.1:{port}"
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            req = Request(
+                f"{base}/api/enrich/missing",
+                data=json.dumps({"query": "property_type=commercial", "limit": 30}).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urlopen(req, timeout=5) as resp:
+                self.assertEqual(resp.status, 202)
+                body = json.loads(resp.read().decode("utf-8"))
+            self.assertGreaterEqual(body["recomputed"]["areas_filled"], 1)
+            self.assertEqual(body["queued"], 1)
+
+            for _ in range(40):
+                with urlopen(f"{base}/api/enrich/status", timeout=5) as resp:
+                    snap = json.loads(resp.read().decode("utf-8"))
+                if snap["status"] != "running":
+                    break
+                time.sleep(0.05)
+            self.assertEqual(snap["status"], "completed")
+            self.assertEqual(snap["succeeded"], 1)
+
+            with AuctionDB(self.db_path, read_only=True) as db:
+                p202 = db.conn.execute(
+                    "SELECT area_sqm, unit_price FROM v_auction_full WHERE item_id = 'w_202_r2'"
+                ).fetchone()
+                self.assertEqual(p202["area_sqm"], 98.5)
+                self.assertIsNotNone(p202["unit_price"])
+        finally:
+            server.enrich_manager.cancel()
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
+
+    def test_batch_enrich_platform_isolation_and_auto_resume(self) -> None:
+        with AuctionDB(self.db_path, read_only=True) as db:
+            tb_row = db.conn.execute("SELECT id FROM auction_rounds WHERE item_id = 'w_202_r2'").fetchone()
+            jd_row = db.conn.execute("SELECT id FROM auction_rounds WHERE item_id = 'w_404_jd'").fetchone()
+            tb_id = int(tb_row["id"])
+            jd_id = int(jd_row["id"])
+
+        call_order: list[str] = []
+
+        class _TaobaoAuthStub:
+            platform = "taobao"
+
+            def __init__(self) -> None:
+                self.cleared = False
+                self.probe_calls = 0
+
+            def check_ready(self) -> tuple[bool, str]:
+                return True, "ok"
+
+            def check_auth_cleared(self) -> bool:
+                self.probe_calls += 1
+                if self.probe_calls >= 2:
+                    self.cleared = True
+                return self.cleared
+
+            def fetch_detail(self, item_id: str, url: str) -> RawAuctionDetail:
+                call_order.append(f"taobao:{item_id}")
+                if not self.cleared:
+                    raise AuthRequiredError("taobao slider", url=url, task_space="tb-space")
+                return RawAuctionDetail(
+                    platform="taobao",
+                    item_id=item_id,
+                    url=url,
+                    title="淘宝补抓成功",
+                    area_sqm=92.0,
+                    notice_text="建筑面积92平方米。",
+                )
+
+        class _JdOkStub:
+            platform = "jd"
+
+            def check_ready(self) -> tuple[bool, str]:
+                return True, "ok"
+
+            def fetch_detail(self, item_id: str, url: str) -> RawAuctionDetail:
+                call_order.append(f"jd:{item_id}")
+                return RawAuctionDetail(
+                    platform="jd",
+                    item_id=item_id,
+                    url=url,
+                    title="京东补抓成功",
+                    area_sqm=115.0,
+                    notice_text="建筑面积115平方米。",
+                )
+
+        tb_stub = _TaobaoAuthStub()
+        jd_stub = _JdOkStub()
+
+        cfg = AppConfig(
+            storage=StorageConfig(db_path=self.db_path),
+            regions=[RegionConfig(name="福州市-住宅", province="福建", city="福州", location_code="350100")],
+        )
+        server = create_web_server(
+            cfg,
+            host="127.0.0.1",
+            port=0,
+            provider_factory=lambda _c: {"taobao": tb_stub, "jd": jd_stub},
+            sleep_fn=lambda _: None,
+            auth_probe_interval=0.04,
+        )
+        port = server.server_address[1]
+        base = f"http://127.0.0.1:{port}"
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            req = Request(
+                f"{base}/api/enrich",
+                data=json.dumps({"round_ids": [tb_id, jd_id], "force": True}).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urlopen(req, timeout=5) as resp:
+                self.assertEqual(resp.status, 202)
+
+            final_snap = None
+            for _ in range(80):
+                with urlopen(f"{base}/api/enrich/status", timeout=5) as resp:
+                    final_snap = json.loads(resp.read().decode("utf-8"))
+                if final_snap["status"] in {"completed", "error", "cancelled"}:
+                    break
+                time.sleep(0.05)
+
+            self.assertIsNotNone(final_snap)
+            self.assertEqual(final_snap["status"], "completed")
+            self.assertEqual(final_snap["succeeded"], 2)
+            self.assertGreaterEqual(tb_stub.probe_calls, 2)
+            # Taobao auth deferred -> JD ran before Taobao retried
+            self.assertEqual(call_order, ["taobao:w_202_r2", "jd:w_404_jd", "taobao:w_202_r2"])
         finally:
             server.enrich_manager.cancel()
             server.shutdown()

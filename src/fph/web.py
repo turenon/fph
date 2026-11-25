@@ -21,7 +21,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from fph.analytics import find_bargain_candidates, get_market_summary
 from fph.config import AppConfig
-from fph.db import AuctionDB, escape_like, now_str
+from fph.db import AuctionDB, build_district_filter, escape_like, now_str
 from fph.pipeline import build_provider, build_providers, resolve_region_provider_name
 from fph.providers.base import AuctionProvider, AuthRequiredError, ProviderError
 
@@ -57,6 +57,16 @@ def _first_param(params: dict[str, list[str]], key: str, default: str = "") -> s
     if not vals:
         return default
     return vals[0].strip()
+
+
+def _joined_param(params: dict[str, list[str]], key: str) -> str:
+    parts: list[str] = []
+    for raw in params.get(key) or []:
+        for part in raw.split(","):
+            s = part.strip()
+            if s:
+                parts.append(s)
+    return ",".join(parts)
 
 
 def _parse_bool(val: str) -> bool:
@@ -176,22 +186,21 @@ def _query_overview(db: AuctionDB, db_path: Path) -> dict[str, Any]:
     }
 
 
-def _query_items(db: AuctionDB, params: dict[str, list[str]]) -> dict[str, Any]:
+def _build_items_where(params: dict[str, list[str]]) -> tuple[str, list[Any]]:
     q = _first_param(params, "q")
     platform = _first_param(params, "platform", "all")
     city = _first_param(params, "city")
-    district = _first_param(params, "district")
+    district = _joined_param(params, "district")
     property_type = _first_param(params, "property_type", "all")
-    status = _first_param(params, "status", "all")
+    status = _joined_param(params, "status") or "all"
     stage = _first_param(params, "stage", "all")
     exclude_stage = _first_param(params, "exclude_stage")
     risk_level = _first_param(params, "risk_level", "all")
     only_full_share = _parse_bool(_first_param(params, "only_full_share"))
     only_enriched = _parse_bool(_first_param(params, "only_enriched"))
+    missing_metric = _parse_bool(_first_param(params, "missing_metric"))
+    detail_state = _first_param(params, "detail_state", "all")
     max_discount = _parse_optional_float(_first_param(params, "max_discount"))
-    sort_key = _first_param(params, "sort", "end_time_desc")
-    page = _parse_int(_first_param(params, "page"), 1, minimum=1)
-    page_size = _parse_int(_first_param(params, "page_size"), 20, minimum=1, maximum=200)
 
     where_clauses: list[str] = ["1=1"]
     sql_params: list[Any] = []
@@ -209,18 +218,32 @@ def _query_items(db: AuctionDB, params: dict[str, list[str]]) -> dict[str, Any]:
     if city:
         where_clauses.append("city LIKE ? ESCAPE '\\'")
         sql_params.append(f"%{escape_like(city.replace('市', ''))}%")
-    if district:
-        where_clauses.append("district LIKE ? ESCAPE '\\'")
-        sql_params.append(f"%{escape_like(district)}%")
+    if district_filter := build_district_filter(district):
+        where_clauses.append(district_filter[0])
+        sql_params.extend(district_filter[1])
     if property_type and property_type != "all":
         where_clauses.append("property_type = ?")
         sql_params.append(property_type)
     if status and status != "all":
-        if status == "active":
-            where_clauses.append("status IN ('upcoming', 'ongoing')")
-        else:
+        expanded_statuses: list[str] = []
+        for raw_st in status.split(","):
+            st = raw_st.strip()
+            if not st or st == "all":
+                continue
+            if st == "active":
+                expanded_statuses.extend(["upcoming", "ongoing"])
+            elif st == "other":
+                expanded_statuses.extend(["withdrawn", "suspended", "ended", "unknown"])
+            else:
+                expanded_statuses.append(st)
+        unique_statuses = list(dict.fromkeys(expanded_statuses))
+        if len(unique_statuses) == 1:
             where_clauses.append("status = ?")
-            sql_params.append(status)
+            sql_params.append(unique_statuses[0])
+        elif unique_statuses:
+            placeholders = ",".join("?" for _ in unique_statuses)
+            where_clauses.append(f"status IN ({placeholders})")
+            sql_params.extend(unique_statuses)
     if stage and stage != "all":
         stage_vals = [s.strip() for s in stage.split(",") if s.strip()]
         if len(stage_vals) == 1:
@@ -241,13 +264,24 @@ def _query_items(db: AuctionDB, params: dict[str, list[str]]) -> dict[str, Any]:
         sql_params.append(risk_level)
     if only_full_share:
         where_clauses.append("is_partial_share = 0")
-    if only_enriched:
+    if only_enriched or detail_state == "enriched":
         where_clauses.append("detail_fetched_at IS NOT NULL")
+    elif detail_state == "unenriched":
+        where_clauses.append("detail_fetched_at IS NULL")
+    if missing_metric or detail_state == "missing_metric":
+        where_clauses.append("(area_sqm IS NULL OR unit_price IS NULL)")
     if max_discount is not None:
         where_clauses.append("discount_rate IS NOT NULL AND discount_rate <= ?")
         sql_params.append(max_discount)
 
-    where_sql = " AND ".join(where_clauses)
+    return " AND ".join(where_clauses), sql_params
+
+
+def _query_items(db: AuctionDB, params: dict[str, list[str]]) -> dict[str, Any]:
+    sort_key = _first_param(params, "sort", "end_time_desc")
+    page = _parse_int(_first_param(params, "page"), 1, minimum=1)
+    page_size = _parse_int(_first_param(params, "page_size"), 20, minimum=1, maximum=200)
+    where_sql, sql_params = _build_items_where(params)
     order_sql = _SORT_SQL_MAP.get(sort_key, _SORT_SQL_MAP["end_time_desc"])
 
     total = int(
@@ -348,26 +382,52 @@ def _query_sync_runs(db: AuctionDB) -> list[dict[str, Any]]:
     return [dict(r) for r in rows]
 
 
+def _parse_bargain_filters(params: dict[str, list[str]]) -> dict[str, Any]:
+    max_discount = _parse_optional_float(_first_param(params, "max_discount"))
+    if max_discount is None:
+        max_discount = 0.80
+    max_risk = _first_param(params, "max_risk", "medium")
+    if max_risk not in {"low", "medium", "high"}:
+        raise ValueError(f"无效的 max_risk: {max_risk}（可选: low / medium / high）")
+    return {
+        "city": _first_param(params, "city") or None,
+        "district": _joined_param(params, "district") or None,
+        "max_discount": max_discount,
+        "max_total_wan": _parse_optional_float(_first_param(params, "max_total")),
+        "min_area": _parse_optional_float(_first_param(params, "min_area")),
+        "max_risk_level": max_risk,
+        "stage": _joined_param(params, "stage") or None,
+        "exclude_stage": _joined_param(params, "exclude_stage") or None,
+    }
+
+
 def _build_export_payload(
     db: AuctionDB,
     *,
     dataset: str,
     city: str | None,
     fmt: str,
+    params: dict[str, list[str]] | None = None,
 ) -> tuple[bytes, str, str]:
     if dataset not in _DATASET_VIEW_MAP:
         raise ValueError(f"不支持的数据集: {dataset}（可选: all / deals / bargains）")
     if fmt not in {"csv", "json"}:
         raise ValueError(f"不支持的导出格式: {fmt}（可选: csv / json）")
 
-    where_sql = ""
-    params: list[Any] = []
-    if city:
-        where_sql = "WHERE city LIKE ? ESCAPE '\\'"
-        params.append(f"%{escape_like(city.replace('市', ''))}%")
+    query_params = params or {}
+    bargain_filter_keys = {"district", "max_discount", "max_total", "min_area", "max_risk", "stage", "exclude_stage"}
+    if dataset == "bargains" and any(k in query_params for k in bargain_filter_keys):
+        b_filters = _parse_bargain_filters(query_params)
+        rows = find_bargain_candidates(db, **b_filters, limit=5000)
+    else:
+        where_sql = ""
+        sql_params: list[Any] = []
+        if city:
+            where_sql = "WHERE city LIKE ? ESCAPE '\\'"
+            sql_params.append(f"%{escape_like(city.replace('市', ''))}%")
 
-    sql = f"SELECT * FROM {_DATASET_VIEW_MAP[dataset]} {where_sql} ORDER BY COALESCE(end_time, last_seen_at) DESC"
-    rows = [dict(r) for r in db.conn.execute(sql, params).fetchall()]
+        sql = f"SELECT * FROM {_DATASET_VIEW_MAP[dataset]} {where_sql} ORDER BY COALESCE(end_time, last_seen_at) DESC"
+        rows = [dict(r) for r in db.conn.execute(sql, sql_params).fetchall()]
     filename = f"fph_{dataset}.{fmt}"
 
     if fmt == "json":
@@ -399,12 +459,14 @@ class EnrichJobManager:
         sleep_fn: Callable[[float], None] = time.sleep,
         is_console_busy_cb: Callable[[], bool] | None = None,
         browser_lock: threading.Lock | None = None,
+        auth_probe_interval: float = 3.0,
     ) -> None:
         self._config = config
         self._provider_factory = provider_factory or build_providers
         self._sleep = sleep_fn
         self._is_console_busy_cb = is_console_busy_cb
         self._browser_lock = browser_lock or threading.Lock()
+        self._auth_probe_interval = max(0.02, float(auth_probe_interval))
         self._cond = threading.Condition()
         self._job: dict[str, Any] = {
             "job_id": "",
@@ -420,6 +482,7 @@ class EnrichJobManager:
             "current_title": "",
             "auth_message": "",
             "auth_url": "",
+            "deferred_platforms": [],
             "task_space": config.provider.task_space,
             "started_at": "",
             "finished_at": "",
@@ -430,6 +493,7 @@ class EnrichJobManager:
     def _snapshot_locked(self) -> dict[str, Any]:
         snap = dict(self._job)
         snap["errors"] = list(self._job["errors"])
+        snap["deferred_platforms"] = list(self._job.get("deferred_platforms") or [])
         snap["remaining"] = len(self._pending)
         return snap
 
@@ -502,6 +566,7 @@ class EnrichJobManager:
                     "current_title": "",
                     "auth_message": "",
                     "auth_url": "",
+                    "deferred_platforms": [],
                     "task_space": self._config.provider.task_space,
                     "started_at": now,
                     "finished_at": "" if pending else now,
@@ -528,6 +593,7 @@ class EnrichJobManager:
                 self._job["status"] = "cancelled"
                 self._job["auth_message"] = ""
                 self._job["auth_url"] = ""
+                self._job["deferred_platforms"] = []
                 self._job["current_round_id"] = None
                 self._job["current_item_id"] = ""
                 self._job["current_title"] = ""
@@ -535,6 +601,73 @@ class EnrichJobManager:
                 self._pending.clear()
                 self._cond.notify_all()
             return self._snapshot_locked()
+
+    def _wait_for_auth_or_auto_resume(self, job_id: str, exc: AuthRequiredError, prov: Any) -> bool:
+        """Pause on auth_required and auto-resume when user clears auth in the visible browser."""
+        wait_started = time.monotonic()
+        last_probe = wait_started
+        max_wait = max(0, int(self._config.provider.auth_wait_timeout_seconds))
+        probe_fn = getattr(prov, "check_auth_cleared", None)
+        wait_step = min(1.0, self._auth_probe_interval)
+
+        with self._cond:
+            if self._job["job_id"] != job_id or self._job["status"] == "cancelled":
+                return False
+            self._job["status"] = "auth_required"
+            self._job["auth_message"] = str(exc)
+            self._job["auth_url"] = exc.url
+            self._job["task_space"] = exc.task_space or self._config.provider.task_space
+
+        while True:
+            should_probe = False
+            with self._cond:
+                if self._job["job_id"] != job_id or self._job["status"] == "cancelled":
+                    return False
+                if self._job["status"] != "auth_required":
+                    return True
+                now_mono = time.monotonic()
+                if max_wait > 0 and (now_mono - wait_started) >= max_wait:
+                    self._job["status"] = "error"
+                    self._job["errors"].append("等待人机验证超时，任务已自动结束")
+                    self._job["finished_at"] = now_str()
+                    self._pending.clear()
+                    return False
+                if callable(probe_fn) and (now_mono - last_probe) >= self._auth_probe_interval:
+                    should_probe = True
+                    last_probe = now_mono
+                else:
+                    self._cond.wait(timeout=wait_step)
+
+            if should_probe:
+                try:
+                    cleared = bool(probe_fn())
+                except Exception:
+                    cleared = False
+                if cleared:
+                    with self._cond:
+                        if self._job["job_id"] != job_id or self._job["status"] == "cancelled":
+                            return False
+                        if self._job["status"] == "auth_required":
+                            self._job["status"] = "running"
+                            self._job["auth_message"] = ""
+                            self._job["auth_url"] = ""
+                            return True
+
+    @staticmethod
+    def _resolve_provider_for_platform(
+        config: AppConfig,
+        providers: dict[str, Any],
+        platform_name: str,
+    ) -> Any:
+        prov = providers.get(platform_name)
+        if prov is not None:
+            return prov
+        for p in providers.values():
+            if getattr(p, "platform", "") == platform_name:
+                return p
+        prov = build_provider(config, platform_name)
+        providers[platform_name] = prov
+        return prov
 
     def _run_job(self, job_id: str) -> None:
         try:
@@ -550,51 +683,69 @@ class EnrichJobManager:
             return
 
         requests_made = 0
+        deferred_items: list[dict[str, Any]] = []
+        deferred_auth: dict[str, AuthRequiredError] = {}
+
         while True:
+            resume_deferred_exc: AuthRequiredError | None = None
+            resume_deferred_platform = ""
             with self._cond:
                 if self._job["job_id"] != job_id or self._job["status"] == "cancelled":
                     return
                 if not self._pending:
-                    self._job["status"] = "completed"
-                    self._job["current_round_id"] = None
-                    self._job["current_item_id"] = ""
-                    self._job["current_title"] = ""
-                    self._job["finished_at"] = now_str()
-                    return
+                    if deferred_items:
+                        self._pending.extend(deferred_items)
+                        deferred_items.clear()
+                        resume_deferred_platform = str(self._pending[0]["platform"])
+                        resume_deferred_exc = deferred_auth.pop(resume_deferred_platform, None)
+                        self._job["deferred_platforms"] = list(deferred_auth.keys())
+                    else:
+                        self._job["status"] = "completed"
+                        self._job["deferred_platforms"] = []
+                        self._job["current_round_id"] = None
+                        self._job["current_item_id"] = ""
+                        self._job["current_title"] = ""
+                        self._job["finished_at"] = now_str()
+                        return
                 item = self._pending[0]
                 self._job["current_round_id"] = item["round_id"]
                 self._job["current_item_id"] = item["item_id"]
                 self._job["current_title"] = item["title"]
 
+            if resume_deferred_exc is not None:
+                try:
+                    deferred_prov = self._resolve_provider_for_platform(
+                        self._config, providers, resume_deferred_platform
+                    )
+                except Exception:
+                    deferred_prov = None
+                if not self._wait_for_auth_or_auto_resume(job_id, resume_deferred_exc, deferred_prov):
+                    return
+
             if requests_made > 0:
                 lo = max(0.0, self._config.provider.min_delay_seconds)
                 hi = max(lo, self._config.provider.max_delay_seconds)
-                if hi > 0:
+                if requests_made % 5 == 0:
+                    if hi > 0:
+                        self._sleep(random.uniform(max(hi, 8.0), max(hi + 4.0, 14.0)))
+                elif hi > 0:
                     self._sleep(random.uniform(lo, hi))
                 with self._cond:
                     if self._job["job_id"] != job_id or self._job["status"] == "cancelled":
                         return
 
             platform_name = str(item["platform"])
-            prov = providers.get(platform_name)
-            if prov is None:
-                for p in providers.values():
-                    if p.platform == platform_name:
-                        prov = p
-                        break
-            if prov is None:
-                try:
-                    prov = build_provider(self._config, platform_name)
-                    providers[platform_name] = prov
-                except Exception as exc:
-                    with self._cond:
-                        if self._job["job_id"] == job_id and self._pending and self._pending[0]["round_id"] == item["round_id"]:
-                            self._pending.pop(0)
-                            self._job["failed"] += 1
-                            self._job["processed"] += 1
-                            if len(self._job["errors"]) < 20:
-                                self._job["errors"].append(f"{item['item_id']}: {exc}")
-                    continue
+            try:
+                prov = self._resolve_provider_for_platform(self._config, providers, platform_name)
+            except Exception as exc:
+                with self._cond:
+                    if self._job["job_id"] == job_id and self._pending and self._pending[0]["round_id"] == item["round_id"]:
+                        self._pending.pop(0)
+                        self._job["failed"] += 1
+                        self._job["processed"] += 1
+                        if len(self._job["errors"]) < 20:
+                            self._job["errors"].append(f"{item['item_id']}: {exc}")
+                continue
 
             requests_made += 1
             try:
@@ -607,17 +758,28 @@ class EnrichJobManager:
                         self._job["succeeded"] += 1
                         self._job["processed"] += 1
             except AuthRequiredError as exc:
+                deferred_now = False
                 with self._cond:
                     if self._job["job_id"] != job_id or self._job["status"] == "cancelled":
                         return
-                    self._job["status"] = "auth_required"
-                    self._job["auth_message"] = str(exc)
-                    self._job["auth_url"] = exc.url
-                    self._job["task_space"] = exc.task_space or self._config.provider.task_space
-                    while self._job["job_id"] == job_id and self._job["status"] == "auth_required":
-                        self._cond.wait(timeout=1.0)
-                    if self._job["job_id"] != job_id or self._job["status"] == "cancelled":
-                        return
+                    has_other_platform = any(
+                        str(it["platform"]) != platform_name for it in self._pending
+                    )
+                    if has_other_platform:
+                        remaining_other: list[dict[str, Any]] = []
+                        for it in self._pending:
+                            if str(it["platform"]) == platform_name:
+                                deferred_items.append(it)
+                            else:
+                                remaining_other.append(it)
+                        self._pending = remaining_other
+                        deferred_auth[platform_name] = exc
+                        self._job["deferred_platforms"] = list(dict.fromkeys(deferred_auth.keys()))
+                        deferred_now = True
+                if deferred_now:
+                    continue
+                if not self._wait_for_auth_or_auto_resume(job_id, exc, prov):
+                    return
             except ProviderError as exc:
                 logger.warning("Web 批量补抓详情失败 platform=%s item_id=%s: %s", platform_name, item["item_id"], exc)
                 try:
@@ -921,9 +1083,10 @@ class _FphHTTPServer(ThreadingHTTPServer):
         provider_factory: Callable[[AppConfig], dict[str, AuctionProvider]] | None = None,
         sleep_fn: Callable[[float], None] = time.sleep,
         process_factory: Callable[[list[str], dict[str, str]], Any] | None = None,
+        auth_probe_interval: float = 3.0,
     ) -> None:
         self.app_config = config
-        self._browser_lock = threading.Lock()
+        self._browser_lock = browser_lock = threading.Lock()
         self.cli_manager = CliJobManager(
             config,
             process_factory=process_factory,
@@ -935,6 +1098,7 @@ class _FphHTTPServer(ThreadingHTTPServer):
             sleep_fn=sleep_fn,
             is_console_busy_cb=self.cli_manager.is_browser_busy,
             browser_lock=self._browser_lock,
+            auth_probe_interval=auth_probe_interval,
         )
         self.cli_manager._is_browser_busy_cb = lambda: (
             self.enrich_manager.status().get("status") in {"running", "auth_required"}
@@ -1021,30 +1185,12 @@ class _FphRequestHandler(BaseHTTPRequestHandler):
                 return
 
             if path == "/api/bargains":
-                city = _first_param(params, "city") or None
-                district = _first_param(params, "district") or None
-                max_discount = _parse_optional_float(_first_param(params, "max_discount"))
-                if max_discount is None:
-                    max_discount = 0.80
-                max_total = _parse_optional_float(_first_param(params, "max_total"))
-                min_area = _parse_optional_float(_first_param(params, "min_area"))
-                max_risk = _first_param(params, "max_risk", "medium")
-                if max_risk not in {"low", "medium", "high"}:
-                    raise ValueError(f"无效的 max_risk: {max_risk}（可选: low / medium / high）")
-                stage = _first_param(params, "stage") or None
-                exclude_stage = _first_param(params, "exclude_stage") or None
+                b_filters = _parse_bargain_filters(params)
                 limit = _parse_int(_first_param(params, "limit"), 50, minimum=1, maximum=200)
                 with AuctionDB(self.server.app_config.storage.db_path) as db:
                     rows = find_bargain_candidates(
                         db,
-                        city=city,
-                        district=district,
-                        max_discount=max_discount,
-                        max_total_wan=max_total,
-                        min_area=min_area,
-                        max_risk_level=max_risk,
-                        stage=stage,
-                        exclude_stage=exclude_stage,
+                        **b_filters,
                         limit=limit,
                     )
                 self._send_json(HTTPStatus.OK, {"rows": rows})
@@ -1099,6 +1245,7 @@ class _FphRequestHandler(BaseHTTPRequestHandler):
                         dataset=dataset,
                         city=city,
                         fmt=fmt,
+                        params=params,
                     )
                 self._send_bytes(
                     HTTPStatus.OK,
@@ -1162,6 +1309,41 @@ class _FphRequestHandler(BaseHTTPRequestHandler):
                 self._send_json(HTTPStatus.ACCEPTED, snap)
                 return
 
+            if path == "/api/enrich/missing":
+                payload = self._read_json_body()
+                query_str = str(payload.get("query") or "")
+                limit = _parse_int(str(payload.get("limit") or MAX_BATCH_ENRICH_SIZE), MAX_BATCH_ENRICH_SIZE, minimum=1, maximum=MAX_BATCH_ENRICH_SIZE)
+                filter_params = parse_qs(query_str, keep_blank_values=False)
+                where_sql, sql_params = _build_items_where(filter_params)
+                with AuctionDB(self.server.app_config.storage.db_path) as db:
+                    recomputed = db.recompute_missing_areas()
+                    rows = db.conn.execute(
+                        f"""
+                        SELECT round_id
+                        FROM v_auction_full
+                        WHERE ({where_sql}) AND (area_sqm IS NULL OR unit_price IS NULL)
+                        ORDER BY
+                          CASE status WHEN 'ongoing' THEN 0 WHEN 'upcoming' THEN 1 ELSE 2 END,
+                          COALESCE(end_time, start_time, last_seen_at) DESC,
+                          round_id DESC
+                        LIMIT ?
+                        """,
+                        [*sql_params, limit],
+                    ).fetchall()
+                round_ids = [int(r["round_id"]) for r in rows]
+                if not round_ids:
+                    self._send_json(
+                        HTTPStatus.OK,
+                        {"status": "completed", "recomputed": recomputed, "queued": 0, "job": None},
+                    )
+                    return
+                snap = self.server.enrich_manager.start(round_ids, force=True)
+                self._send_json(
+                    HTTPStatus.ACCEPTED,
+                    {"status": "accepted", "recomputed": recomputed, "queued": len(round_ids), "job": snap},
+                )
+                return
+
             if path == "/api/enrich/resume":
                 snap = self.server.enrich_manager.resume()
                 self._send_json(HTTPStatus.OK, snap)
@@ -1210,6 +1392,7 @@ def create_web_server(
     provider_factory: Callable[[AppConfig], dict[str, AuctionProvider]] | None = None,
     sleep_fn: Callable[[float], None] = time.sleep,
     process_factory: Callable[[list[str], dict[str, str]], Any] | None = None,
+    auth_probe_interval: float = 3.0,
 ) -> ThreadingHTTPServer:
     """Create a threaded local HTTP server serving the FPH data dashboard."""
     return _FphHTTPServer(
@@ -1219,6 +1402,7 @@ def create_web_server(
         provider_factory=provider_factory,
         sleep_fn=sleep_fn,
         process_factory=process_factory,
+        auth_probe_interval=auth_probe_interval,
     )
 
 

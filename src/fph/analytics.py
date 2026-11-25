@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from fph.db import AuctionDB, escape_like
+from fph.db import AuctionDB, build_district_filter, escape_like
 
 
 def get_market_summary(
@@ -98,9 +98,9 @@ def find_bargain_candidates(
     if city:
         where.append("city LIKE ? ESCAPE '\\'")
         params.append(f"%{escape_like(city.replace('市', ''))}%")
-    if district:
-        where.append("district LIKE ? ESCAPE '\\'")
-        params.append(f"%{escape_like(district)}%")
+    if district_filter := build_district_filter(district):
+        where.append(district_filter[0])
+        params.extend(district_filter[1])
     if max_total_wan is not None:
         where.append("COALESCE(current_price, initial_price) <= ?")
         params.append(max_total_wan * 10_000)

@@ -15,7 +15,7 @@ from fph.normalizer import (
     normalize_status,
     parse_price_yuan,
 )
-from fph.providers.base import AuctionProvider, PageResult
+from fph.providers.base import AuctionProvider, PageResult, ProviderError
 from fph.providers.ego_runtime import (
     MARKER_END,
     MARKER_START,
@@ -442,8 +442,19 @@ const CFG = {cfg_json};
 async function run() {{
   const {{ task, page }} = await getOrCreatePage(CFG.taskSpace);
   await page.goto(CFG.url, {{ timeout: CFG.timeoutMs }});
-  await page.waitForTimeout(2000);
-  await page.evaluate(() => window.scrollBy(0, 1000));
+  for (let i = 0; i < 16; i += 1) {{
+    await page.waitForTimeout(500);
+    const ready = await page.evaluate(() => {{
+      const href = location.href || "";
+      const txt = (document.body && document.body.innerText) ? document.body.innerText : "";
+      if (/passport\\.jd\\.com|plogin\\.m\\.jd\\.com|safe\\.jd\\.com|cfe\\.m\\.jd\\.com|verify/i.test(href)) return true;
+      if (/扫码登录|账号登录|请登录|安全验证|滑块验证|人机验证/.test(txt) && txt.length < 1500) return true;
+      const loadingOnly = txt.trim().startsWith("加载中") && txt.length < 300;
+      return !loadingOnly && /(?:起拍价|当前价|成交价|变卖价|标的物所在地|处置机构|处置单位)/.test(txt);
+    }});
+    if (ready) break;
+  }}
+  await page.evaluate(() => window.scrollBy(0, 1200));
   await page.waitForTimeout(1000);
 
   const result = await page.evaluate(() => {{
@@ -463,13 +474,15 @@ async function run() {{
       }};
     }}
 
-    const pick = (re) => {{
-      const m = bodyText.match(re);
+    const pick = (re, text = bodyText) => {{
+      const m = text.match(re);
       return m ? m[1].trim() : null;
     }};
 
-    const h1 = document.querySelector('h1, .pm-name, .item-title, [class*="title"] h1');
-    const itemTitle = h1 ? (h1.innerText || "").trim() : title.replace(/-京东拍卖.*$/, "").trim();
+    const titleCandidates = Array.from(document.querySelectorAll('h1, .pm-name, .item-title, [class*="itemTitle" i], [class*="productName" i]'))
+      .map((el) => (el.innerText || "").trim())
+      .filter((t) => t.length >= 4 && t.length <= 150);
+    const itemTitle = titleCandidates[0] || title.replace(/[-_].*京东.*$/, "").trim();
 
     // Scope price/status/bid extraction to the primary item header area to avoid matching bottom recommendations
     const mainArea = document.querySelector('.pm-main, .paimai-info, .product-intro, #main-info, [class*="detail-top"], [class*="item-info"]');
@@ -480,25 +493,59 @@ async function run() {{
       return m ? m[1].trim() : null;
     }};
 
+    const isGenericNotice = (t) =>
+      t.startsWith("1. 参与司法拍卖需要做的准备工作") ||
+      t.startsWith("一、保证金的缴纳") ||
+      t.includes("标的物详情描述") ||
+      /^(?:竞买须知|拍品位置信息)/.test(t);
+
     const noticeEls = Array.from(document.querySelectorAll('#J_NoticeDetail, .notice-detail, [id*="notice" i], [class*="notice" i], [class*="announcement" i]'));
-    const bestNotice = noticeEls
+    const bestNoticeEl = noticeEls
+      .filter((el) => !/pmEnsureNotice|pmFaq/i.test(el.className || ""))
       .map((el) => (el.innerText || "").trim())
-      .filter((t) => t.length >= 300 && !t.startsWith("1. 参与司法拍卖需要做的准备工作"))
+      .filter((t) => t.length >= 300 && !isGenericNotice(t))
       .sort((a, b) => b.length - a.length)[0] || "";
-    const surveyEl = document.querySelector('#J_ItemDesc, .item-desc, [id*="intro" i], [class*="introduce" i], [class*="survey" i], [class*="detail-content" i]');
+
+    let noticeFromText = "";
+    const noticeMatches = Array.from(
+      bodyText.matchAll(/(?:^|\\n)\\s*竞买公告\\s*\\n(?!\\s*竞买须知\\s*\\n)([\\s\\S]{{200,15000}}?)(?=\\n\\s*(?:竞买须知|拍品位置信息|保证金须知|出价记录|相关帮助)\\s*\\n|$)/g)
+    );
+    if (noticeMatches.length) {{
+      const longestNotice = noticeMatches
+        .map((m) => m[1].replace(/^1\\.\\s*参与司法拍卖需要做的准备工作[\\s\\S]*?更多热门问题>\\s*/m, "").trim())
+        .sort((a, b) => b.length - a.length)[0];
+      if (longestNotice) noticeFromText = longestNotice;
+    }}
+    const noticeText = noticeFromText || bestNoticeEl || "";
+
+    const surveyEl = document.querySelector('#J_ItemDesc, .item-desc, [id*="intro" i], [class*="introduce" i], [class*="survey" i], [class*="itemDesc" i]');
     const surveyRaw = surveyEl ? (surveyEl.innerText || "").trim() : "";
+    let surveyFromText = "";
+    const surveySectionMatch = bodyText.match(/(?:^|\\n)\\s*标的物详情描述\\s*\\n([\\s\\S]{{40,8000}}?)(?=\\n\\s*竞买公告\\s*\\n|$)/);
+    if (surveySectionMatch) {{
+      surveyFromText = surveySectionMatch[1].trim();
+    }}
+    const surveyText = (surveyRaw.length >= 120 && !surveyRaw.startsWith("加载中"))
+      ? surveyRaw
+      : (surveyFromText || bodyText.replace(/^加载中\\.{0,3}\\s*/m, "").slice(0, 8000));
 
-    const noticeText = bestNotice || bodyText.slice(0, 12000);
-    const surveyText = surveyRaw.length >= 120 ? surveyRaw : bodyText.slice(0, 8000);
+    const courtSelectors = Array.from(document.querySelectorAll('[class*="court" i], [class*="agency" i], [class*="organ" i], .unit-txt'))
+      .map((el) => (el.innerText || "").trim())
+      .filter((t) => t && t.length >= 4 && t.length <= 40 && !/[。，；]/.test(t) && !/^¥|万|元$/.test(t));
+    const courtFromLabel = pick(/(?:处置机构|处置单位|送拍机构|处置法院|拍品所属)\\s*[：:]\\s*([^\\n]{{2,40}})/) || "";
+    const courtFromBody = pick(/([\\u4e00-\\u9fa5]{{2,20}}(?:高级|中级|铁路运输|海事)?人民法院)/) || "";
+    const rawCourt = courtSelectors[0] || courtFromLabel || courtFromBody;
+    const courtName = (rawCourt && rawCourt.length <= 40 && !/[。，；：]/.test(rawCourt)) ? rawCourt : "";
 
-    const courtEl = document.querySelector('[class*="court" i], [class*="agency" i], [class*="organ" i], .unit-txt');
-    const rawCourt = courtEl
-      ? (courtEl.innerText || "").trim()
-      : (pick(/(?:处置单位|送拍机构|处置法院|拍品所属)[：:]\\s*([^\\n]{{2,36}})/) || "");
-    const courtName = (rawCourt && rawCourt.length <= 40 && !/[。，；]/.test(rawCourt)) ? rawCourt : "";
+    const addrFromDetail =
+      pick(/(?:标的物所在地|标的物地址|房产坐落|房屋坐落)[：:\\s]+([^\\n]{{4,100}})/) ||
+      pick(/(?:^|\\n)\\s*(?:坐落|地址)[：:\\s]+([^\\n]{{4,100}})/) ||
+      "";
+    const address = (addrFromDetail && addrFromDetail !== "查看地图") ? addrFromDetail : "";
 
-    const address = pick(/(?:标的物所在地|标的物地址|房产坐落|坐落|地址)[：:\\s]*([^\\n]{{4,80}})/) || "";
-    const areaSqm = pick(/建筑面积[：:约为\\s]*([0-9]+(?:\\.[0-9]+)?)\\s*(?:平方米|平米|㎡|m²|m2)/i);
+    const areaSqm =
+      pick(/(?:房屋)?建筑面积[：:约为\\s]*([0-9]+(?:\\.[0-9]+)?)\\s*(?:平方米|平米|㎡|m²|m2)/i) ||
+      pick(/(?:^|\\n)\\s*面积[\\s\\n\\t：:]*[^\\d\\n]{0,12}([0-9]+(?:\\.[0-9]+)?)\\s*(?:平方米|平米|㎡|m²|m2)/i);
 
     return {{
       authRequired: false,
@@ -551,6 +598,9 @@ class JdEgoProvider(AuctionProvider):
 
     def check_ready(self) -> tuple[bool, str]:
         return self._ego.check_ready()
+
+    def check_auth_cleared(self) -> bool:
+        return self._ego.check_auth_cleared(self.platform)
 
     def expand_status_queries(self, status_scope: str) -> list[tuple[str, str]]:
         return expand_jd_status_queries(status_scope)
@@ -658,6 +708,12 @@ class JdEgoProvider(AuctionProvider):
             page_timeout=self.config.page_timeout_seconds,
         )
         data = self._run_ego_script(script)
+        current_url = str(data.get("currentUrl") or target_url)
+        url_id_match = re.search(r"paimai\.jd\.com/(\d+)", current_url)
+        if url_id_match and item_id.isdigit() and url_id_match.group(1) != item_id:
+            raise ProviderError(
+                f"京东详情页返回了不匹配的标的 URL（期望 {item_id}，实际 {current_url}），疑似页面尚未完成切换"
+            )
         bid_count = _to_int(data.get("bidCount"))
         title = str(data.get("title") or "").strip()
         notice_text = str(data.get("noticeText") or "").strip()

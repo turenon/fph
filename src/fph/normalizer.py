@@ -66,7 +66,6 @@ RISK_RULES: list[tuple[str, str, str]] = [
     ("非正常死亡/凶宅", "high", r"(非正常死亡|自杀|他杀|凶宅|命案)"),
     ("买受人全额担税", "medium", r"(一切税费.{0,10}买受人|全部税费.{0,10}买受人|买卖双方.{0,8}税费.{0,10}均由买受人|税费均由买受人承担)"),
     ("欠费风险", "medium", r"(欠缴.{0,10}(物业|水电|燃气|取暖)|物业费.{0,10}买受人承担|拖欠物业费)"),
-    ("违建/搭建", "medium", r"(违章建筑|违法建筑|违建|自行拆除|搭建物|改建)"),
     ("划拨土地", "medium", r"(划拨土地|土地性质.{0,6}划拨|需补缴土地出让金)"),
     ("有户口风险", "low", r"(户口.{0,12}不负责迁出|户籍.{0,12}自行解决)"),
 ]
@@ -292,15 +291,16 @@ def classify_property_type(
     if not has_residential_unit and re.search(r"(车位|车库|泊位|储藏室|杂物间|地下室)", t):
         return "parking"
 
-    # 7. Explicit non-residential planned purpose in detail text
+    # 7. Explicit non-residential planned purpose in detail text (search beyond first 1000 chars so survey_text after notice_text is covered)
     if detail_text and not has_residential_unit and "住宅" not in t:
-        snippet = detail_text[:1000]
-        if re.search(r"(?:房屋用途|规划用途|设计用途|用途)[：:\s]*(?:商业|商铺|办公|写字楼|商办|非住宅)", snippet):
-            return "commercial"
-        if re.search(r"(?:房屋用途|规划用途|设计用途|用途)[：:\s]*(?:工业|厂房|仓储)", snippet):
-            return "industrial"
-        if re.search(r"(?:房屋用途|规划用途|设计用途|用途)[：:\s]*(?:车位|车库)", snippet):
+        snippet = detail_text[:20000]
+        purpose_label = r"(?:房屋用途|规划用途|设计用途|标的物用途|用途)"
+        if re.search(rf"{purpose_label}[：:\s]+[^\n]{{0,40}}(?:车位|车库|泊位|储藏室|杂物间)", snippet):
             return "parking"
+        if re.search(rf"{purpose_label}[：:\s]+[^\n]{{0,40}}(?:工业|厂房|仓储|车间)", snippet):
+            return "industrial"
+        if re.search(rf"{purpose_label}[：:\s]+[^\n]{{0,40}}(?:商业|商铺|办公|写字楼|商办|非住宅)", snippet):
+            return "commercial"
 
     # 8. Residential unit / residential category fallback
     if has_residential_unit or "住宅" in combined or "住宅" in p:

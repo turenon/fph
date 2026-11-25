@@ -134,3 +134,50 @@ class EgoBrowserRunner:
             raise ProviderError(f"ego-browser 退出码 {code}: {err_msg}")
 
         return _extract_marked_json(combined)
+
+    def check_auth_cleared(self, platform: str) -> bool:
+        """Read-only probe checking whether the user already cleared auth in the visible page."""
+        cfg_json = json.dumps(
+            {
+                "taskSpace": self.config.task_space,
+                "platform": platform,
+                "markerStart": MARKER_START,
+                "markerEnd": MARKER_END,
+            },
+            ensure_ascii=False,
+        )
+        script = f"""
+const CFG = {cfg_json};
+{TASK_SPACE_HELPER_JS}
+
+async function run() {{
+  const {{ page }} = await getOrCreatePage(CFG.taskSpace);
+  const state = await page.evaluate((plat) => {{
+    const href = location.href || "";
+    const txt = (document.body && document.body.innerText) ? document.body.innerText : "";
+    if (plat === "taobao") {{
+      const badUrl = /login\\.taobao\\.com|sec\\.taobao\\.com|bixi|punish|verify/i.test(href);
+      const badBody = /亲，请拖动下方滑块|安全验证|访问被拒绝|人机验证|扫码登录|密码登录/.test(txt) && txt.length < 1500;
+      const cleared = !badUrl && !badBody && /taobao\\.com/i.test(href) && txt.length >= 200;
+      return {{ cleared }};
+    }}
+    if (plat === "jd") {{
+      const badUrl = /passport\\.jd\\.com|plogin\\.m\\.jd\\.com|safe\\.jd\\.com|cfe\\.m\\.jd\\.com|verify/i.test(href);
+      const badBody = /扫码登录|账号登录|请登录|安全验证|滑块验证|人机验证/.test(txt) && txt.length < 1500;
+      const cleared = !badUrl && !badBody && /jd\\.com/i.test(href) && txt.length >= 200;
+      return {{ cleared }};
+    }}
+    return {{ cleared: false }};
+  }}, CFG.platform);
+  console.log(CFG.markerStart + JSON.stringify(state) + CFG.markerEnd);
+}}
+
+run().catch((err) => {{
+  console.log(CFG.markerStart + JSON.stringify({{ cleared: false, probeError: String(err) }}) + CFG.markerEnd);
+}});
+""".strip()
+        try:
+            payload = self.run_script(script)
+            return bool(payload.get("cleared"))
+        except Exception:
+            return False

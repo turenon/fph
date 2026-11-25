@@ -10,6 +10,7 @@ from typing import Any
 from fph.models import RawAuctionDetail, RawAuctionItem, SyncSummary
 from fph.normalizer import (
     classify_property_type,
+    extract_area_sqm,
     normalize_datetime,
     normalize_stage,
     normalize_status,
@@ -233,6 +234,19 @@ def _iter_chunks(items: Sequence[int], chunk_size: int = 500) -> list[list[int]]
 def escape_like(value: str) -> str:
     """Escape SQLite LIKE wildcards (\\, %, _) for use with ESCAPE '\\'."""
     return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def build_district_filter(district: str | None) -> tuple[str, list[str]] | None:
+    """Build a SQL WHERE clause and params supporting single or comma-separated districts."""
+    if not district:
+        return None
+    vals = [part.strip() for part in district.split(",") if part.strip()]
+    if not vals:
+        return None
+    if len(vals) == 1:
+        return "district LIKE ? ESCAPE '\\'", [f"%{escape_like(vals[0])}%"]
+    clauses = " OR ".join("district LIKE ? ESCAPE '\\'" for _ in vals)
+    return f"({clauses})", [f"%{escape_like(v)}%" for v in vals]
 
 
 class AuctionDB:
@@ -959,6 +973,7 @@ class AuctionDB:
         *,
         allowed_property_types: Sequence[str] | None = None,
         allowed_statuses: Sequence[str] | None = None,
+        allowed_districts: Sequence[str] | None = None,
         min_date: str | None = None,
         max_attempts: int | None = None,
         cooldown_hours: int = 0,
@@ -981,6 +996,16 @@ class AuctionDB:
             placeholders = ",".join("?" for _ in statuses)
             clauses.append(f"r.status IN ({placeholders})")
             params.extend(statuses)
+
+        districts = list(dict.fromkeys(str(d).strip() for d in (allowed_districts or ()) if str(d).strip()))
+        if districts:
+            if len(districts) == 1:
+                clauses.append("p.district LIKE ? ESCAPE '\\'")
+                params.append(f"%{escape_like(districts[0])}%")
+            else:
+                d_clauses = " OR ".join("p.district LIKE ? ESCAPE '\\'" for _ in districts)
+                clauses.append(f"({d_clauses})")
+                params.extend(f"%{escape_like(d)}%" for d in districts)
 
         if min_date:
             clauses.append(
@@ -1237,3 +1262,55 @@ class AuctionDB:
             "revocation_fixed_rounds": len(revocation_fix_ids),
             "dry_run": dry_run,
         }
+
+    def recompute_missing_areas(self) -> dict[str, int]:
+        """Re-extract missing area_sqm from stored texts and backfill unit_price locally."""
+        ts = now_str()
+        rows = self.conn.execute(
+            """
+            SELECT r.id AS round_id, r.property_id, r.title, r.notice_text, r.survey_text,
+                   r.initial_price, r.current_price, r.unit_price,
+                   p.address, p.area_sqm
+            FROM auction_rounds r
+            JOIN properties p ON p.id = r.property_id
+            WHERE p.area_sqm IS NULL OR p.area_sqm <= 0 OR r.unit_price IS NULL
+            ORDER BY r.id DESC
+            """
+        ).fetchall()
+
+        prop_area_map: dict[int, float] = {}
+        areas_filled = 0
+        unit_prices_filled = 0
+
+        for row in rows:
+            pid = int(row["property_id"])
+            area = row["area_sqm"]
+            if (area is None or float(area) <= 0) and pid in prop_area_map:
+                area = prop_area_map[pid]
+            if area is None or float(area) <= 0:
+                extracted = extract_area_sqm(
+                    str(row["title"] or ""),
+                    f"{row['address'] or ''}\n{row['notice_text'] or ''}\n{row['survey_text'] or ''}",
+                )
+                if extracted is not None and extracted > 0:
+                    area = extracted
+                    prop_area_map[pid] = extracted
+                    self.conn.execute(
+                        "UPDATE properties SET area_sqm = ?, updated_at = ? WHERE id = ?",
+                        (area, ts, pid),
+                    )
+                    areas_filled += 1
+
+            if area is not None and float(area) > 0:
+                ref_price = row["current_price"] if row["current_price"] is not None else row["initial_price"]
+                new_unit = _calc_unit_price(ref_price, float(area))
+                if new_unit is not None and row["unit_price"] is None:
+                    self.conn.execute(
+                        "UPDATE auction_rounds SET unit_price = ? WHERE id = ?",
+                        (new_unit, int(row["round_id"])),
+                    )
+                    unit_prices_filled += 1
+
+        if areas_filled or unit_prices_filled:
+            self.conn.commit()
+        return {"areas_filled": areas_filled, "unit_prices_filled": unit_prices_filled}

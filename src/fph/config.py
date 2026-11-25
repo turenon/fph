@@ -83,6 +83,18 @@ def normalize_statuses(values: Iterable[str] | str | None) -> list[str]:
     return deduped
 
 
+def normalize_districts(raw: Any) -> list[str]:
+    if raw is None:
+        return []
+    if isinstance(raw, str):
+        items = [part.strip() for part in raw.split(",")]
+    elif isinstance(raw, (bytes, bytearray, dict)) or not isinstance(raw, Iterable):
+        raise ValueError("enrich_districts 必须是字符串或列表")
+    else:
+        items = [str(part).strip() for part in raw]
+    return list(dict.fromkeys(x for x in items if x))
+
+
 def _parse_int_option(raw: dict[str, Any], key: str, default: int, *, min_value: int) -> int:
     val = raw.get(key, default)
     if isinstance(val, bool):
@@ -118,6 +130,7 @@ class ProviderConfig:
     allowed_property_types: list[str] = field(default_factory=list)
     lookback_days: int = 0
     enrich_statuses: list[str] = field(default_factory=list)
+    enrich_districts: list[str] = field(default_factory=list)
     stop_on_known_ended_page: bool = True
     max_detail_attempts: int = 3
     max_refresh_attempts: int = 3
@@ -225,6 +238,7 @@ def load_config(path: str | Path | None = None) -> AppConfig:
         allowed_property_types=normalize_property_types(provider_raw.get("allowed_property_types")),
         lookback_days=_parse_int_option(provider_raw, "lookback_days", 0, min_value=0),
         enrich_statuses=normalize_statuses(provider_raw.get("enrich_statuses")),
+        enrich_districts=normalize_districts(provider_raw.get("enrich_districts")),
         stop_on_known_ended_page=bool(provider_raw.get("stop_on_known_ended_page", True)),
         max_detail_attempts=_parse_int_option(provider_raw, "max_detail_attempts", 3, min_value=1),
         max_refresh_attempts=_parse_int_option(provider_raw, "max_refresh_attempts", 3, min_value=1),

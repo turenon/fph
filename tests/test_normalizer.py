@@ -8,6 +8,7 @@ from fph.normalizer import (
     classify_property_type,
     extract_area_sqm,
     extract_district,
+    extract_risk_tags,
     normalize_datetime,
     normalize_status,
     parse_price_yuan,
@@ -201,6 +202,29 @@ class NormalizerTest(unittest.TestCase):
         self.assertEqual(normalize_status("ended", bid_count=2), "sold")
         self.assertEqual(normalize_status("ended", bid_count=0), "failed")
         self.assertEqual(normalize_status("ended"), "ended")
+
+    def test_risk_tags_exclude_illegal_construction_rule(self) -> None:
+        tags, level = extract_risk_tags(
+            "某小区住宅",
+            "是否存在违章建筑、违法建筑、搭建物、改建或需自行拆除情形请自行核实。",
+        )
+        self.assertNotIn("违建/搭建", tags)
+        self.assertEqual(tags, [])
+        self.assertEqual(level, "low")
+
+    def test_parking_classified_from_detail_planned_purpose_even_after_long_notice(self) -> None:
+        long_notice = "拍卖公告正文\n" + ("条款内容说明。" * 250)
+        survey_text = (
+            "标的物状况\t规划用途\t城镇住宅用地（车位）/车位\n"
+            "建筑面积\t39.22㎡\n"
+            "总层数/层次\t共36层/第-2层\n"
+        )
+        ptype = classify_property_type(
+            "龙岩市新罗区西陂街道龙腾中路582号龙岩国贸天琴湾（2013拍-30地块）C464",
+            detail_text=f"{long_notice}\n{survey_text}",
+            category_hint="50025969",
+        )
+        self.assertEqual(ptype, "parking")
 
 
 if __name__ == "__main__":

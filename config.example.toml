@@ -39,6 +39,8 @@ allowed_property_types = ["residential"]
 lookback_days = 730
 # 自动补抓详情/公告的目标状态（默认仅补抓在拍与预告，避免历史结拍标的触发大量详情请求；设为 [] 表示不限）
 enrich_statuses = ["ongoing", "upcoming"]
+# 仅自动补抓重点关注区县的详情（如 ["鼓楼区", "仓山区", "新罗区"]；设为 [] 表示不限区县，非重点区县可在看板中按需手动补抓）
+enrich_districts = []
 # 已结束列表整页均已入库且为终态（或超期）时提前停止翻页，减少重复请求
 stop_on_known_ended_page = true
 # 详情补抓与结拍回刷的最大失败重试次数与冷却时间（小时），防死循环请求

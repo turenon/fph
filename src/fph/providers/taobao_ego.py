@@ -407,6 +407,9 @@ class TaobaoEgoProvider(AuctionProvider):
     def check_ready(self) -> tuple[bool, str]:
         return self._ego.check_ready()
 
+    def check_auth_cleared(self) -> bool:
+        return self._ego.check_auth_cleared(self.platform)
+
     def expand_status_queries(self, status_scope: str) -> list[tuple[str, str]]:
         return _expand_taobao_status_queries(status_scope)
 

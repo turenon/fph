@@ -8,7 +8,7 @@ from pathlib import Path
 from fph.config import AppConfig, ProviderConfig, RegionConfig, StorageConfig
 from fph.db import AuctionDB
 from fph.pipeline import SyncPipeline
-from fph.providers.base import AuthRequiredError
+from fph.providers.base import AuthRequiredError, ProviderError
 from fph.providers.ego_runtime import MARKER_END, MARKER_START
 from fph.providers.jd_ego import JdEgoProvider
 from fph.providers.jd_urls import build_jd_list_url, expand_jd_status_queries
@@ -444,6 +444,28 @@ class JdEgoAndMultiPlatformTest(unittest.TestCase):
             self.assertEqual(detail.status, "upcoming")
             self.assertEqual(detail.initial_price, 730000.0)
             self.assertEqual(detail.current_price, 730000.0)
+
+    def test_fetch_detail_rejects_mismatched_item_url_and_script_guards(self) -> None:
+        captured: list[str] = []
+
+        def mismatch_runner(cmd: list[str], stdin_text: str, timeout: int) -> tuple[int, str, str]:
+            captured.append(stdin_text)
+            payload = {
+                "authRequired": False,
+                "currentUrl": "https://paimai.jd.com/311566005",
+                "title": "福建省闽侯县甘蔗街道昙石山西大道109号世纪芳洲住宅小区6#楼701单元房产",
+                "status": "二拍",
+            }
+            return 0, f"{MARKER_START}{json.dumps(payload, ensure_ascii=False)}{MARKER_END}", ""
+
+        prov = JdEgoProvider(ProviderConfig(task_space="jd-space"), runner=mismatch_runner)
+        with self.assertRaises(ProviderError):
+            prov.fetch_detail("311515686", "https://paimai.jd.com/311515686")
+
+        self.assertIn("pmEnsureNotice", captured[0])
+        self.assertIn("处置机构", captured[0])
+        self.assertIn("标的物所在地", captured[0])
+        self.assertIn("标的物详情描述", captured[0])
 
 
 if __name__ == "__main__":

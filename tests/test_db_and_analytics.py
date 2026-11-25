@@ -440,6 +440,38 @@ class DbAndAnalyticsTest(unittest.TestCase):
         )
         self.assertEqual([r["item_id"] for r in rows_capped], ["d_upcoming"])
 
+        # Filter by allowed_districts (single & multi)
+        self.db.upsert_list_item(
+            RawAuctionItem(
+                platform="taobao",
+                item_id="d_cangshan",
+                url="https://sf-item.taobao.com/sf_item/6.htm",
+                title="福州市仓山区测试小区6幢101室",
+                province="福建",
+                city="福州",
+                status="ongoing",
+            )
+        )
+        gulou_rows = self.db.list_rounds_needing_detail(
+            "taobao",
+            limit=20,
+            allowed_statuses=["ongoing", "upcoming"],
+            allowed_districts=["鼓楼区"],
+        )
+        self.assertEqual({r["item_id"] for r in gulou_rows}, {"d_ongoing", "d_upcoming"})
+        both_rows = self.db.list_rounds_needing_detail(
+            "taobao",
+            limit=20,
+            allowed_statuses=["ongoing", "upcoming"],
+            allowed_districts=["鼓楼区", "仓山区"],
+        )
+        self.assertEqual({r["item_id"] for r in both_rows}, {"d_ongoing", "d_upcoming", "d_cangshan"})
+
+        from fph.config import normalize_districts
+        self.assertEqual(normalize_districts("鼓楼区, 仓山区, 鼓楼区"), ["鼓楼区", "仓山区"])
+        with self.assertRaises(ValueError):
+            normalize_districts(123)
+
     def test_list_rounds_needing_ended_refresh_filters_and_backoff(self) -> None:
         now = datetime.now(CN_TZ)
         recent_end = (now - timedelta(days=3)).strftime("%Y-%m-%d %H:%M:%S")
